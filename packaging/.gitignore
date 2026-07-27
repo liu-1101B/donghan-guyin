@@ -1,0 +1,11 @@
+build/
+dist/
+*.spec
+*.exe
+古韵合成器_Setup*.exe
+__pycache__/
+*.pyc
+espeak-ng/
+.vscode/
+.idea/
+debug_output*.txt
