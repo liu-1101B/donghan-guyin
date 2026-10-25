@@ -182,18 +182,16 @@ def analyze_reply(classical: str):
 def synth_extended(kind: str, text: str, router: VoiceRouter):
     """按设置合成一段扩展朗读音频。
 
-    kind = "modern" → 现代汉语读回答（Edge TTS；断网回退古音合成）
+    kind = "modern" → 现代汉语读回答（仅 Edge TTS 真自然语音；
+           网络不可用时返回空，绝不回退共振峰合成——那样一个字
+           一个蹦，比没声音更误导）
     kind = "ancient_trans" → 古汉语朗读翻译（东汉音合成）
     返回 (audio_bytes, kind)；失败返回 (b"", kind)。
     """
     if kind == "modern":
         mp3 = tts_client.speak_natural(text, voice=router.voice,
                                        rate=router.rate)
-        if mp3:
-            return mp3, "mp3"
-        wav, _ = synthesize_ancient(text, pitch=router.pitch,
-                                    speed=router.speed)
-        return (wav, "wav") if wav else (b"", "wav")
+        return (mp3, "mp3") if mp3 else (b"", "mp3")
     # kind == "ancient_trans"
     wav, _ = synthesize_ancient(text, pitch=router.pitch,
                                 speed=router.speed)
@@ -481,7 +479,7 @@ with col2:
             if st.button("🗣 用现代汉语读回答", use_container_width=True,
                          key="tts_modern"):
                 text = res.get("reply_modern") or res["reply"]
-                with st.spinner("合成现代汉语朗读…"):
+                with st.spinner("合成现代汉语朗读（Edge TTS，需网络）…"):
                     audio, k = synth_extended("modern", text, router)
                 if audio:
                     ai = get_audio_io()
@@ -489,24 +487,30 @@ with col2:
                         ai.play_async(audio)
                         st.session_state.ext_audio = (audio, k)
                         st.session_state.ext_label = "回答·现代汉语"
+                        st.session_state.ext_text = text
+                        st.session_state.ext_ipa = ""
                         st.success("正在播放：回答（现代汉语）")
                     else:
                         st.error("播放通道异常，自动重连后仍无法播放")
                 else:
-                    st.warning("合成失败（网络不可用且古音合成失败）")
+                    st.error("现代汉语朗读需要网络（Edge TTS）：当前网络不可用。"
+                             "白话朗读不做本地兜底合成（音质差、一个字一个蹦）。")
         with cB:
             st.markdown(f'<div class="audio-card"><strong>📜 我的话·古汉语读</strong><br><span style="font-size:0.7rem;color:#7a6a5a">把你的话翻成文言，用东汉音念</span></div>',
                         unsafe_allow_html=True)
             if st.button("📜 用古汉语读我的翻译", use_container_width=True,
                          key="tts_ancient_trans"):
                 text = res.get("translation") or res["user"]
-                audio, k = synth_extended("ancient_trans", text, router)
+                with st.spinner("合成古汉语朗读…"):
+                    audio, k = synth_extended("ancient_trans", text, router)
                 if audio:
                     ai = get_audio_io()
                     if _ensure_playable(ai):
                         ai.play_async(audio)
                         st.session_state.ext_audio = (audio, k)
                         st.session_state.ext_label = "我的翻译·东汉古音"
+                        st.session_state.ext_text = text
+                        st.session_state.ext_ipa = text_to_ipa(text).ipa_text
                         st.success("正在播放：我的古汉语翻译（东汉音）")
                     else:
                         st.error("播放通道异常，自动重连后仍无法播放")
@@ -519,6 +523,17 @@ with col2:
             st.markdown(f'##### 回放：{st.session_state.get("ext_label", "扩展朗读")}')
             efmt = "audio/wav" if ek == "wav" else "audio/mpeg"
             st.audio(ea, format=efmt)
+            # 朗读文本（古汉语带东汉 IPA 音标）
+            ex_text = st.session_state.get("ext_text", "")
+            if ex_text:
+                st.markdown(
+                    f'<div class="classical-text" style="font-size:1.15rem">'
+                    f'{ex_text}</div>', unsafe_allow_html=True)
+            ex_ipa = st.session_state.get("ext_ipa", "")
+            if ex_ipa:
+                st.markdown("#### 🔊 东汉洛阳音 IPA")
+                st.markdown(f'<div class="ipa-display">{ex_ipa}</div>',
+                            unsafe_allow_html=True)
 
         # 逐字音韵分析（古音模式）
         if res["mode"] == "ancient":
