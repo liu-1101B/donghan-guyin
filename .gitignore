@@ -9,3 +9,9 @@ espeak-ng/
 .vscode/
 .idea/
 debug_output*.txt
+
+.venv/
+.env
+models/
+audio_out/
+.pip-cache/

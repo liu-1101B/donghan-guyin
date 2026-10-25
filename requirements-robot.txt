@@ -1,0 +1,18 @@
+# 机器人核心依赖（不含 Streamlit 网页界面）
+# 在 Jetson AGX Orin (Ubuntu 24.04 / Python 3.12 / aarch64) 上验证
+numpy>=1.24.0
+scipy>=1.10.0
+pypinyin>=0.50.0
+qieyun>=0.13.0
+httpx>=0.24.0
+python-dotenv>=1.0.0
+pyyaml>=6.0.0
+
+# 本地语音识别（默认 Vosk，模型 ~44MB 放 models/vosk-small-cn）
+vosk>=0.3.45
+
+# 音频播放（MP3 解码；arecord/aplay 由系统提供）
+miniaudio>=1.60
+
+# 自然语音合成（在线；断网时自动回退本地古音合成）
+edge-tts>=6.0.0
