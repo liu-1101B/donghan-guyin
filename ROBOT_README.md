@@ -149,19 +149,23 @@ JetPack 的 `/usr/lib/systemd/system/bluetooth.service.d/nv-bluetooth-service.co
 现象：蓝牙显示已连接、sink 也是默认，但音频流通道实际已挂起：
 `pw-play` 一直阻塞不返回（3 秒的音等 30 秒不放完），音箱完全没声。
 
-**根因**：WirePlumber 的 `suspend-node.lua` 会把**空闲 5 秒以上**的音频
-节点挂起。A2DP sink 被挂起后，Jetson 上重新协商 A2DP 经常卡死，通道就
-成了"假连接"。
+**两个已实测的故障模式**（2026-10-25 定位）：
 
-**根治（已实现）**：`robot/audio_io.py` 的 A2DP 保活——app 启动时
-`start_keepalive()` 向默认输出持续喂一路**静音流**（16kHz mono，人耳
-不可闻），让 A2DP sink 永不空闲、永不挂起。进程级单例（pidfile
-`.keepalive.pid`），热重载/多次启动幂等。已验证：保活进程空闲 60 秒后
-通道仍存活。
+1. **A2DP profile 静默断开**：bluez 日志 `a2dp-sink: connected ->
+   disconnected` 而 L2CAP 连接仍在。PipeWire 蓝牙 sink 消失 → 默认输出
+   掉回**无喇叭的空接口**（Built-in Analog）→ `pw-play` 不报错但全程无声。
+   这是"没声音"最常见的一种。
+2. **A2DP 通道挂死**（"假连接"）：WirePlumber `suspend-node.lua` 会把
+   空闲 >5s 的节点挂起；A2DP 重协商卡死 → `pw-play` 永久阻塞。
 
-**兜底**：界面"设备播放/扩展朗读"按钮播放前先 0.3s 探测通道
-（`AudioIO.probe()`）；若已挂死，自动跑 `./robot/bt_reset.sh`
-（断开→重连→确认 sink→3 秒测试音自检）恢复后再播，并重新拉起保活。
+**曾试过的方案**：持续静音流"保活"（让 sink 永不空闲）——**失败**。
+该音箱（Relink）约 1.5 分钟后主动断开 A2DP profile，保活反而加速故障。
+
+**现行方案（按需检查，已验证）**：界面播放按钮播放前做三重检查
+（`robot/audio_io.py::bt_status()` + `AudioIO.probe()`）：
+A2DP sink 存在 + 是默认输出 + 0.3s 探测音播得通。任一失败 → 自动
+`./robot/bt_reset.sh`（断开→重连→**显式 `wpctl set-default`**→3s
+测试音自检）→ 复检后再播。正常时开销约 2.5s，异常时约 20s。
 
 手动恢复（界面外的终端里）：
 
@@ -176,9 +180,9 @@ robot/
 ├── main.py          # 主循环（按键说话 / selftest / text 模式）
 ├── app.py           # Streamlit 网页界面（音色/语速/基频滑杆，推荐入口）
 ├── audio_io.py      # arecord 采音 + 播放（pw-play 优先走默认输出, aplay 回退；MP3 经 miniaudio 解码）
-│                    #   含 A2DP 保活 start_keepalive()/stop_keepalive() 与通道探测 probe()
+│                    #   含通道探测 probe() 与蓝牙状态快照 bt_status()
 ├── bt_connect.sh    # 蓝牙音箱：连接 + 设为默认输出 + 音量校正
-├── bt_reset.sh      # A2DP 假连接恢复：断开→重连→确认 sink→测试音自检
+├── bt_reset.sh      # A2DP 恢复：断开→重连→设默认输出→测试音自检
 ├── session.py       # 多轮对话状态（默认保留 8 轮）
 └── voice_router.py  # 自然语音 / 东汉古音 运行时切换（持有音色/语速参数）
 
@@ -207,7 +211,7 @@ config/settings.yaml # 音频设备、对话容量、默认模式
 | `synthesize_ancient(text, pitch, speed)` | language/ancient_tts.py | 文本+基频+语速 | (WAV 字节, 覆盖率) |
 | `play_wav()/play_async()` | robot/audio_io.py | 字节 | 播放状态（async 后台不阻塞） |
 | `probe(timeout=6)` | robot/audio_io.py | — | 通道是否活着（False=假连接） |
-| `start_keepalive()/stop_keepalive()` | robot/audio_io.py | — | A2DP 静音保活流（幂等，进程单例） |
+| `bt_status(mac)` | robot/audio_io.py | — | 蓝牙快照 `{connected, sink_id, sink_name, is_default}` |
 
 ## 关于"东汉古音"的说明
 

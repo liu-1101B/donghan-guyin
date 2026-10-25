@@ -93,7 +93,7 @@ _autoreload_changed_modules()
 import yaml
 from robot.session import Session
 from robot.voice_router import VoiceRouter
-from robot.audio_io import AudioIO, start_keepalive
+from robot.audio_io import AudioIO, bt_status, BT_MAC
 from services import tts_client
 from language.ancient_tts import text_to_ipa, synthesize_ancient
 from phonology_db import lookup_char, EASTERN_HAN_DB
@@ -207,30 +207,34 @@ def play_to_device(kind: str, text: str, router: VoiceRouter) -> bool:
     return True
 
 
-def _ensure_playable(ai) -> bool:
-    """确保播放通道可用：探测→(挂死则)自动重连→再探测。
+def _bt_healthy() -> bool:
+    """蓝牙音箱通道是否可播：A2DP sink 存在 + 是默认输出。
 
-    正常时 ~0.4s；仅 A2DP 假连接时触发一次断连重连（~15s）。
-    重连成功后顺带把保活静音流拉起，避免再次挂起。
+    只查这两项（~2s）；probe 另跑（~0.4s）。sink 消失（A2DP profile
+    断开）是"无声但不报错"的主因，必须显式查——探测音发给空接口
+    也会"成功"，不可单独依赖。
     """
-    if ai.probe():
+    s = bt_status(BT_MAC)
+    return bool(s["sink_id"] and s["is_default"])
+
+
+def _ensure_playable(ai) -> bool:
+    """确保蓝牙音箱可播：sink 检查 → 通道探测 →(异常则)自动重连。
+
+    正常时 ~2.5s；仅异常时触发一次 bt_reset.sh（断开→重连→设默认，
+    ~20s）。重连后复检 sink+探测。
+    """
+    if _bt_healthy() and ai.probe():
         return True
     with st.spinner("蓝牙通道异常，正在自动重连…"):
         subprocess.run([os.path.join(ROOT, "robot", "bt_reset.sh")],
-                       capture_output=True, timeout=90)
-    ok = ai.probe()
-    if ok:
-        start_keepalive()
-    return ok
+                       capture_output=True, timeout=120)
+    return _bt_healthy() and ai.probe()
 
 
 # ---------- 页面 ----------
 st.set_page_config(page_title="古音机器人 · 东汉洛阳官音",
                    page_icon=":classical_building:", layout="wide")
-
-# A2DP 保活：持续向默认输出喂静音流，防止 WirePlumber 把空闲的蓝牙
-# sink 挂起（挂起后重协商常卡死 → "假连接"无声）。幂等，已存活则跳过。
-start_keepalive()
 
 st.markdown("""
 <style>
@@ -452,8 +456,8 @@ with col2:
         with c2:
             st.markdown(f'<div class="audio-card"><strong>设备播放</strong></div>',
                         unsafe_allow_html=True)
-            # 设备播放：先探测通道（正常时 ~0.3s）；若 A2DP 假连接(通道挂死)
-            # 自动断连重连再播。保活服务在时探测几乎永远走快路径。
+            # 设备播放：sink 存在性+默认检查 + 通道探测（正常时 ~2.5s）；
+            # A2DP profile 断开/通道挂死时自动 bt_reset.sh 重连再播。
             if st.button("▶ 蓝牙/默认设备", use_container_width=True,
                          key="dev_play"):
                 ai = get_audio_io()

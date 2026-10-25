@@ -17,4 +17,3 @@ audio_out/
 .pip-cache/
 nv-bluetooth-service.conf.bak
 .reload_state.json
-.keepalive.pid

@@ -196,75 +196,71 @@ class AudioIO:
                 pass
 
 
-# ---------- A2DP 保活 ----------
-# WirePlumber 的 suspend-node.lua 会把空闲 5 秒以上的音频节点挂起；
-# A2DP sink 被挂起后 Jetson 重协商经常卡死（"假连接"：显示已连接但
-# pw-play 永久阻塞）。保活 = 持续向默认输出喂一路静音流，让 A2DP 通道
-# 永不空闲。进程级单例（pidfile 跨热重载安全）。
+# ---------- 蓝牙播放通道检查 ----------
+# 实测记录（Jetson + Relink 音箱 F8:D3:F0:A9:08:68）：
+# 1) A2DP 音频 profile 会偶发断开而 L2CAP 连接仍在（bluez 日志
+#    a2dp-sink: connected -> disconnected）→ PipeWire 蓝牙 sink 消失 →
+#    默认输出掉回无喇叭的空接口，pw-play 不报错但全程无声。
+# 2) A2DP sink 被 WirePlumber 空闲挂起后，重协商可能卡死
+#    （"假连接"：pw-play 永久阻塞）。
+# 3) 持续静音流"保活"不可行：该音箱约 1.5 分钟后主动断开 A2DP。
+# 因此不做常驻保活，改为**按需检查**：sink 存在 + 是默认 + 通道探测
+# 三项都过才播；任一失败 → 跑 bt_reset.sh（断开→重连→设默认）→ 复检。
 
-_KEEPALIVE_PIDFILE = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    ".keepalive.pid")
+BT_MAC = os.environ.get("BT_DEVICE_MAC", "F8:D3:F0:A9:08:68")
+_BT_RESET_SH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "bt_reset.sh")
 
 
-def _keepalive_running() -> bool:
+def bt_status(mac: str = BT_MAC) -> dict:
+    """蓝牙播放状态快照。
+
+    返回 {connected, bt_name, sink_id, sink_name, is_default}：
+      connected  设备 L2CAP 是否已连接
+      sink_id    PipeWire 里该设备 A2DP sink 的 id（不在 = None）
+      is_default 该 sink 是否为当前默认输出
+    """
+    import re
+    out = {"connected": False, "bt_name": None, "sink_id": None,
+           "sink_name": None, "is_default": False}
     try:
-        with open(_KEEPALIVE_PIDFILE) as f:
-            pid = int(f.read().strip())
-        os.kill(pid, 0)
-        return True
+        info = subprocess.run(["bluetoothctl", "--timeout", "5",
+                               "info", mac],
+                              capture_output=True, text=True,
+                              timeout=10).stdout
+        out["connected"] = "Connected: yes" in info
+        for line in info.splitlines():
+            if "Name:" in line:
+                out["bt_name"] = line.split(":", 1)[1].strip()
+                break
     except Exception:
-        return False
-
-
-def _keepalive_feed(proc) -> None:
-    """持续向 pw-play 的 stdin 写静音块，直到进程退出。"""
-    chunk = b"\x00\x00" * 16000  # 0.5s @16kHz mono s16le = 32KB
+        return out
+    if not out["bt_name"]:
+        return out
     try:
-        while proc.poll() is None:
-            proc.stdin.write(chunk)
-            time.sleep(0.4)
-    except (BrokenPipeError, OSError):
-        pass
+        status = subprocess.run(["wpctl", "status"], capture_output=True,
+                                text=True, timeout=10).stdout
     except Exception:
-        pass
-
-
-def start_keepalive() -> bool:
-    """启动 A2DP 保活静音流（幂等，已存活则直接返回 True）。"""
-    if _keepalive_running():
-        return True
-    try:
-        p = subprocess.Popen(
-            ["pw-play", "--rate", "16000", "--channels", "1",
-             "--format", "s16", "-"],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL)
-    except (FileNotFoundError, OSError):
-        return False
-    if p.poll() is not None:
-        return False
-    try:
-        with open(_KEEPALIVE_PIDFILE, "w") as f:
-            f.write(str(p.pid))
-    except OSError:
-        pass
-    threading.Thread(target=_keepalive_feed, args=(p,), daemon=True).start()
-    return True
-
-
-def stop_keepalive() -> None:
-    """停止保活静音流。"""
-    try:
-        with open(_KEEPALIVE_PIDFILE) as f:
-            os.kill(int(f.read().strip()), 15)
-    except Exception:
-        pass
-    try:
-        os.unlink(_KEEPALIVE_PIDFILE)
-    except OSError:
-        pass
+        return out
+    # 只解析 Sinks: 区块（Sources 区块也有 [vol:，且行首带 │ 边框字符，
+    # 用 search 而非 match）
+    start = status.find("Sinks:")
+    end = status.find("Sink endpoints", start) if start >= 0 else -1
+    block = status[start:end] if start >= 0 and end > start else ""
+    default_id = None
+    for line in block.splitlines():
+        m = re.search(r"(\*?)\s*(\d+)\.\s+(.+?)\s+\[vol:", line)
+        if not m:
+            continue
+        is_def, sid, sname = (m.group(1) == "*", int(m.group(2)),
+                              m.group(3).strip())
+        if is_def:
+            default_id = sid
+        if out["sink_id"] is None and out["bt_name"] in sname:
+            out["sink_id"], out["sink_name"] = sid, sname
+    out["is_default"] = (out["sink_id"] is not None
+                         and default_id == out["sink_id"])
+    return out
 
     # ---------- 自检 ----------
     def selftest(self, path: str = "audio_out/selftest.wav") -> bool:
