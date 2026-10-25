@@ -16,3 +16,4 @@ miniaudio>=1.60
 
 # 自然语音合成（在线；断网时自动回退本地古音合成）
 edge-tts>=6.0.0
+opencc-python-reimplemented>=0.1.0
