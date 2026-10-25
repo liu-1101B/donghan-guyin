@@ -57,8 +57,13 @@ class AudioIO:
 
     # ---------- 播放 ----------
     def play_wav(self, wav_bytes: bytes) -> bool:
-        """播放 WAV 字节串（阻塞直到播完；可被 stop() 打断）"""
+        """播放 WAV 字节串（阻塞直到播完；可被 stop() 打断）
+
+        本机有 PipeWire：aplay 直连优先（已验证 MMAP 流可正常打开），
+        失败时回退 pw-play（走 PipeWire 节点）。
+        """
         self.stop()
+        # 1) 原生 aplay 直连
         try:
             self._play_proc = subprocess.Popen(
                 ["aplay", "-q", "-D", self.playback_device, "-"],
@@ -67,10 +72,43 @@ class AudioIO:
             self._play_proc.stdin.write(wav_bytes)
             self._play_proc.stdin.close()
             self._play_proc.wait()
-            return self._play_proc.returncode == 0
+            if self._play_proc.returncode == 0:
+                return True
+            print(f"[audio] aplay 返回 {self._play_proc.returncode}，尝试 pw-play")
         except Exception as e:
-            print(f"[audio] WAV 播放失败: {e}")
+            print(f"[audio] aplay 失败: {e}")
+        # 2) pw-play 回退（写临时文件，走系统 PipeWire 节点）
+        return self._pw_play_bytes(wav_bytes)
+
+    def _pw_play_bytes(self, wav_bytes: bytes) -> bool:
+        """pw-play 回退通道：需要 pw-play 在 PATH 中"""
+        tmp = None
+        try:
+            tmp = os.path.join(self._tmp_dir(), "pw_playback.wav")
+            with open(tmp, "wb") as f:
+                f.write(wav_bytes)
+            self._play_proc = subprocess.Popen(
+                ["pw-play", tmp],
+            )
+            self._play_proc.wait()
+            return self._play_proc.returncode == 0
+        except FileNotFoundError:
+            print("[audio] 无 pw-play，且 aplay 失败")
             return False
+        except Exception as e:
+            print(f"[audio] pw-play 失败: {e}")
+            return False
+        finally:
+            if tmp and os.path.exists(tmp):
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+
+    def _tmp_dir(self) -> str:
+        d = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "audio_out")
+        os.makedirs(d, exist_ok=True)
+        return d
 
     def _to_wav_bytes(self, data: bytes) -> bytes:
         """任意音频（mp3/wav/ogg）→ WAV 字节串"""
