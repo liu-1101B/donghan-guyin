@@ -26,6 +26,47 @@ from dotenv import load_dotenv
 load_dotenv(os.path.join(ROOT, ".env"))
 
 import streamlit as st
+import importlib
+
+# 代码热重载：Streamlit 只会重跑 app.py，但其它模块缓存在进程里。
+# 这里按依赖顺序检查各核心模块的 mtime，变了就 reload，使改代码后
+# 刷新页面即可生效（无需重启服务）。文件有语法错误时跳过该模块并提示。
+_RELOAD_ORDER = [
+    "phonology_db", "sound_synth", "classical_translator",
+    "language.style_prompt", "language.ancient_tts",
+    "services.llm_client", "services.tts_client", "services.asr_client",
+    "language.turn_engine",
+    "robot.session", "robot.voice_router", "robot.audio_io",
+]
+
+
+def _autoreload_changed_modules():
+    """任一核心模块 mtime 变化 → 按依赖顺序整体重载（保证引用链一致）"""
+    seen = st.session_state.setdefault("_mod_mtime", {})
+    mtimes, changed = {}, []
+    for name in _RELOAD_ORDER:
+        try:
+            mod = importlib.import_module(name)
+            path = getattr(mod, "__file__", None)
+            mtimes[name] = os.path.getmtime(path) if path else None
+        except Exception:
+            continue
+    for name, m in mtimes.items():
+        if m is not None and seen.get(name) is not None and seen[name] != m:
+            changed.append(name)
+    if changed:
+        for name in _RELOAD_ORDER:   # 全部按依赖顺序重载
+            try:
+                importlib.reload(importlib.import_module(name))
+            except Exception as e:
+                st.session_state._reload_warn = f"重载 {name} 失败：{e}"
+        st.session_state._reloaded = ", ".join(changed)
+        st.session_state._changed_mods = set(changed)
+    seen.update(mtimes)
+    return changed
+
+
+_autoreload_changed_modules()
 
 import yaml
 from robot.session import Session
@@ -81,6 +122,17 @@ def get_audio_io():
     return AudioIO(capture_device=a.get("capture_device", "plughw:2,0"),
                    playback_device=a.get("playback_device", "plughw:2,0"),
                    sample_rate=a.get("sample_rate", 16000))
+
+
+# 代码重载后必须重建缓存实例：旧实例的方法仍绑定旧类（如旧 Turn 没有
+# reply_modern），仅重载模块不够。Session 一并重建（开发期可接受丢上下文）。
+if st.session_state.get("_changed_mods"):
+    get_router.clear()
+    get_audio_io.clear()
+    get_session.clear()
+    if "services.asr_client" in st.session_state["_changed_mods"]:
+        get_asr.clear()
+    st.session_state["_changed_mods"] = None
 
 
 # ---------- 音韵分析（逐字，供表格展示） ----------
@@ -181,6 +233,13 @@ st.markdown("""
 
 st.markdown('<div class="main-header">古 音</div>', unsafe_allow_html=True)
 st.markdown('<div class="sub-header">東漢·洛陽·官音機器人 │ Qwen3 對談 · 雙軌語音</div>', unsafe_allow_html=True)
+
+if st.session_state.get("_reload_warn"):
+    st.warning(st.session_state._reload_warn)
+    st.session_state._reload_warn = None
+if st.session_state.get("_reloaded"):
+    st.info(f"🔄 检测到代码更新，已热重载：{st.session_state._reloaded}")
+    st.session_state._reloaded = None
 
 if "turns" not in st.session_state:
     st.session_state.turns = []       # [(user, translation, reply, mode, source)]
