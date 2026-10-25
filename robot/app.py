@@ -41,9 +41,19 @@ _RELOAD_ORDER = [
 ]
 
 
+# 基线存全局文件（跨浏览器会话/跨刷新）：进程首次运行 app.py 时记录的
+# 各模块 mtime = 进程当前内存里加载的版本。任何文件比基线新 → 需重载。
+_RELOAD_STATE = os.path.join(ROOT, ".reload_state.json")
+
+
 def _autoreload_changed_modules():
-    """任一核心模块 mtime 变化 → 按依赖顺序整体重载（保证引用链一致）"""
-    seen = st.session_state.setdefault("_mod_mtime", {})
+    """核心模块 mtime 晚于基线 → 按依赖顺序整体重载（保证引用链一致）"""
+    import json
+    try:
+        with open(_RELOAD_STATE, encoding="utf-8") as f:
+            seen = json.load(f)
+    except Exception:
+        seen = None
     mtimes, changed = {}, []
     for name in _RELOAD_ORDER:
         try:
@@ -52,9 +62,14 @@ def _autoreload_changed_modules():
             mtimes[name] = os.path.getmtime(path) if path else None
         except Exception:
             continue
-    for name, m in mtimes.items():
-        if m is not None and seen.get(name) is not None and seen[name] != m:
-            changed.append(name)
+    if seen is None:
+        # 无基线：无法证明内存版本 == 磁盘版本 → 全量重载（约 2 秒，安全）
+        changed = [n for n in mtimes if mtimes[n] is not None]
+        seen = {}
+    else:
+        for name, m in mtimes.items():
+            if m is not None and seen.get(name) is not None and m > seen[name]:
+                changed.append(name)
     if changed:
         for name in _RELOAD_ORDER:   # 全部按依赖顺序重载
             try:
@@ -63,7 +78,12 @@ def _autoreload_changed_modules():
                 st.session_state._reload_warn = f"重载 {name} 失败：{e}"
         st.session_state._reloaded = ", ".join(changed)
         st.session_state._changed_mods = set(changed)
-    seen.update(mtimes)
+        seen = dict(mtimes)
+    try:
+        with open(_RELOAD_STATE, "w", encoding="utf-8") as f:
+            json.dump(seen, f)
+    except OSError:
+        pass
     return changed
 
 
