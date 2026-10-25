@@ -3,14 +3,15 @@ robot/audio_io.py
 本地采音与播放（Jetson AGX Orin 实测可用）
 
 - 录制：arecord（16kHz mono WAV）。
-- 播放：统一走 aplay。MP3/其它格式先用 miniaudio 解码为 WAV。
-  这样 stop() 可以统一打断播放（杀掉 aplay 进程）。
-设备编号从 config/settings.yaml 读取，默认按本机实测：
-  麦克风+扬声器 = USB 音频一体机 (plughw:2,0)
+- 播放：优先 pw-play（走 PipeWire 默认输出，自动跟随当前选择的设备，
+  如蓝牙音箱）；pw-play 不可用时回退 aplay 直连（用 playback_device 指定卡）。
+  MP3/其它格式先经 miniaudio 解码为 WAV 再播。
+设备编号从 config/settings.yaml 读取（aplay 回退用）。
 """
 import io
 import os
 import subprocess
+import tempfile
 import wave
 
 try:
@@ -56,14 +57,48 @@ class AudioIO:
             return False
 
     # ---------- 播放 ----------
+    def _to_wav_bytes(self, data: bytes) -> bytes:
+        """任意音频（mp3/wav/ogg）→ WAV 字节串"""
+        if data[:4] == b"RIFF":  # 已是 WAV
+            return data
+        if MINIAUDIO_AVAILABLE:
+            try:
+                d = miniaudio.decode(data)
+                return _pcm_to_wav(bytes(d.samples), d.sample_rate, d.nchannels)
+            except Exception as e:
+                print(f"[audio] miniaudio 解码失败: {e}")
+        return data
+
     def play_wav(self, wav_bytes: bytes) -> bool:
         """播放 WAV 字节串（阻塞直到播完；可被 stop() 打断）
 
-        本机有 PipeWire：aplay 直连优先（已验证 MMAP 流可正常打开），
-        失败时回退 pw-play（走 PipeWire 节点）。
+        优先 pw-play（PipeWire 默认输出，跟随当前选择的设备）；
+        失败回退 aplay 直连 playback_device。
         """
+        wav_bytes = self._to_wav_bytes(wav_bytes)
         self.stop()
-        # 1) 原生 aplay 直连
+        # 1) pw-play（写临时文件）
+        tmp = None
+        try:
+            tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+            tmp.write(wav_bytes)
+            tmp.close()
+            self._play_proc = subprocess.Popen(["pw-play", tmp.name])
+            self._play_proc.wait()
+            if self._play_proc.returncode == 0:
+                return True
+            print(f"[audio] pw-play 返回 {self._play_proc.returncode}，尝试 aplay")
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            print(f"[audio] pw-play 失败: {e}")
+        finally:
+            if tmp and os.path.exists(tmp.name):
+                try:
+                    os.unlink(tmp.name)
+                except OSError:
+                    pass
+        # 2) aplay 直连回退
         try:
             self._play_proc = subprocess.Popen(
                 ["aplay", "-q", "-D", self.playback_device, "-"],
@@ -72,57 +107,13 @@ class AudioIO:
             self._play_proc.stdin.write(wav_bytes)
             self._play_proc.stdin.close()
             self._play_proc.wait()
-            if self._play_proc.returncode == 0:
-                return True
-            print(f"[audio] aplay 返回 {self._play_proc.returncode}，尝试 pw-play")
+            return self._play_proc.returncode == 0
         except Exception as e:
             print(f"[audio] aplay 失败: {e}")
-        # 2) pw-play 回退（写临时文件，走系统 PipeWire 节点）
-        return self._pw_play_bytes(wav_bytes)
-
-    def _pw_play_bytes(self, wav_bytes: bytes) -> bool:
-        """pw-play 回退通道：需要 pw-play 在 PATH 中"""
-        tmp = None
-        try:
-            tmp = os.path.join(self._tmp_dir(), "pw_playback.wav")
-            with open(tmp, "wb") as f:
-                f.write(wav_bytes)
-            self._play_proc = subprocess.Popen(
-                ["pw-play", tmp],
-            )
-            self._play_proc.wait()
-            return self._play_proc.returncode == 0
-        except FileNotFoundError:
-            print("[audio] 无 pw-play，且 aplay 失败")
             return False
-        except Exception as e:
-            print(f"[audio] pw-play 失败: {e}")
-            return False
-        finally:
-            if tmp and os.path.exists(tmp):
-                try:
-                    os.unlink(tmp)
-                except OSError:
-                    pass
-
-    def _tmp_dir(self) -> str:
-        d = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "audio_out")
-        os.makedirs(d, exist_ok=True)
-        return d
-
-    def _to_wav_bytes(self, data: bytes) -> bytes:
-        """任意音频（mp3/wav/ogg）→ WAV 字节串"""
-        if MINIAUDIO_AVAILABLE:
-            try:
-                d = miniaudio.decode(data)
-                return _pcm_to_wav(bytes(d.samples), d.sample_rate, d.nchannels)
-            except Exception as e:
-                print(f"[audio] miniaudio 解码失败: {e}")
-        # 已是 WAV 则原样返回
-        return data
 
     def play_mp3(self, mp3_bytes: bytes) -> bool:
-        """播放 MP3 字节串（先解码为 WAV 再走 aplay）"""
+        """播放 MP3 字节串（先解码为 WAV 再播）"""
         return self.play_wav(self._to_wav_bytes(mp3_bytes))
 
     def play_file(self, path: str) -> bool:
