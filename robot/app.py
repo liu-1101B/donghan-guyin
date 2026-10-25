@@ -32,7 +32,7 @@ from robot.session import Session
 from robot.voice_router import VoiceRouter
 from robot.audio_io import AudioIO
 from services import tts_client
-from language.ancient_tts import text_to_ipa
+from language.ancient_tts import text_to_ipa, synthesize_ancient
 from phonology_db import lookup_char, EASTERN_HAN_DB
 
 OUT_DIR = os.path.join(ROOT, "audio_out")
@@ -102,6 +102,37 @@ def analyze_reply(classical: str):
                 rows.append({"char": ch, "ipa": ipa,
                              "tone": "今音", "src": "拼音近似"})
     return rows
+
+
+# ---------- 扩展朗读合成（白话回答 / 古文翻译） ----------
+def synth_extended(kind: str, text: str, router: VoiceRouter):
+    """按设置合成一段扩展朗读音频。
+
+    kind = "modern" → 现代汉语读回答（Edge TTS；断网回退古音合成）
+    kind = "ancient_trans" → 古汉语朗读翻译（东汉音合成）
+    返回 (audio_bytes, kind)；失败返回 (b"", kind)。
+    """
+    if kind == "modern":
+        mp3 = tts_client.speak_natural(text, voice=router.voice,
+                                       rate=router.rate)
+        if mp3:
+            return mp3, "mp3"
+        wav, _ = synthesize_ancient(text, pitch=router.pitch,
+                                    speed=router.speed)
+        return (wav, "wav") if wav else (b"", "wav")
+    # kind == "ancient_trans"
+    wav, _ = synthesize_ancient(text, pitch=router.pitch,
+                                speed=router.speed)
+    return (wav, "wav") if wav else (b"", "wav")
+
+
+def play_to_device(kind: str, text: str, router: VoiceRouter) -> bool:
+    """合成扩展朗读并后台发送到设备（不阻塞界面）"""
+    audio, fmt = synth_extended(kind, text, router)
+    if not audio:
+        return False
+    get_audio_io().play_async(audio)
+    return True
 
 
 # ---------- 页面 ----------
@@ -249,6 +280,7 @@ with col1:
         st.session_state.last_result = {
             "translation": turn.translation,
             "reply": turn.reply,
+            "reply_modern": turn.reply_modern,
             "source": turn.source,
             "mode": turn.mode,
             "audio": turn.audio,
@@ -287,10 +319,14 @@ with col2:
     if res:
         st.markdown("#### 📜 应答")
         if res["translation"]:
-            st.markdown(f'<div class="modern-text"><b>译文</b>：{res["translation"]}</div>',
+            st.markdown(f'<div class="modern-text"><b>我的话·古汉语</b>：{res["translation"]}</div>',
                         unsafe_allow_html=True)
         st.markdown(f'<div class="classical-text">{res["reply"]}</div>',
                     unsafe_allow_html=True)
+        # 白话版回答（与文言不同时显示）
+        if res.get("reply_modern") and res["reply_modern"] != res["reply"]:
+            st.markdown(f'<div class="modern-text"><b>白话</b>：{res["reply_modern"]}</div>',
+                        unsafe_allow_html=True)
 
         # 徽标
         badges = f'<span class="badge">来源 {res["source"]}</span>'
@@ -316,16 +352,55 @@ with col2:
         with c2:
             st.markdown(f'<div class="audio-card"><strong>设备播放</strong></div>',
                         unsafe_allow_html=True)
-            if st.button("▶ 蓝牙/默认设备", use_container_width=True):
-                ai = get_audio_io()
-                with st.spinner("发送到设备…"):
-                    ok = ai.play_wav(res["audio"])
-                st.success("已发送到默认输出设备" if ok else "设备播放失败")
+            # 后台发送：不阻塞界面（pw-play 不再等待播完）
+            if st.button("▶ 蓝牙/默认设备", use_container_width=True,
+                         key="dev_play"):
+                get_audio_io().play_async(res["audio"])
+                st.success("已发送到默认输出设备（后台播放）")
         with c3:
             fname = f"guyin_{int(res['ms'])}.{res['audio_kind']}"
             st.download_button("⬇ 下载", res["audio"],
                                file_name=fname, mime=fmt,
                                use_container_width=True)
+
+        # 扩展朗读：现代汉语读回答 / 古汉语读我的话（翻译）
+        cA, cB = st.columns(2, gap="small")
+        with cA:
+            st.markdown(f'<div class="audio-card"><strong>🗣 回答·现代汉语读</strong><br><span style="font-size:0.7rem;color:#7a6a5a">把回答翻成白话，用普通话念</span></div>',
+                        unsafe_allow_html=True)
+            if st.button("🗣 用现代汉语读回答", use_container_width=True,
+                         key="tts_modern"):
+                text = res.get("reply_modern") or res["reply"]
+                with st.spinner("合成现代汉语朗读…"):
+                    audio, k = synth_extended("modern", text, router)
+                if audio:
+                    get_audio_io().play_async(audio)
+                    st.session_state.ext_audio = (audio, k)
+                    st.session_state.ext_label = "回答·现代汉语"
+                    st.success("正在播放：回答（现代汉语）")
+                else:
+                    st.warning("合成失败（网络不可用且古音合成失败）")
+        with cB:
+            st.markdown(f'<div class="audio-card"><strong>📜 我的话·古汉语读</strong><br><span style="font-size:0.7rem;color:#7a6a5a">把你的话翻成文言，用东汉音念</span></div>',
+                        unsafe_allow_html=True)
+            if st.button("📜 用古汉语读我的翻译", use_container_width=True,
+                         key="tts_ancient_trans"):
+                text = res.get("translation") or res["user"]
+                audio, k = synth_extended("ancient_trans", text, router)
+                if audio:
+                    get_audio_io().play_async(audio)
+                    st.session_state.ext_audio = (audio, k)
+                    st.session_state.ext_label = "我的翻译·东汉古音"
+                    st.success("正在播放：我的古汉语翻译（东汉音）")
+                else:
+                    st.warning("古音合成失败（无有效字符？）")
+
+        # 扩展朗读的浏览器内回放（点过按钮后可在浏览器里再听）
+        if st.session_state.get("ext_audio"):
+            ea, ek = st.session_state.ext_audio
+            st.markdown(f'##### 回放：{st.session_state.get("ext_label", "扩展朗读")}')
+            efmt = "audio/wav" if ek == "wav" else "audio/mpeg"
+            st.audio(ea, format=efmt)
 
         # 逐字音韵分析（古音模式）
         if res["mode"] == "ancient":

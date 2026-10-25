@@ -20,12 +20,13 @@ MODE_ANCIENT = "ancient"    # 东汉古音（音韵库 + 合成器）
 @dataclass
 class Turn:
     user_text: str
-    translation: str
-    reply: str
-    source: str          # cloud | local
-    mode: str            # natural | ancient
-    audio: bytes         # mp3 或 wav
-    audio_kind: str      # "mp3" | "wav"
+    translation: str          # 用户原话 → 东汉文言
+    reply: str                # 机器人回答（东汉文言）
+    reply_modern: str = ""    # 机器人回答的现代白话版
+    source: str = ""          # cloud | local
+    mode: str = ""            # natural | ancient
+    audio: bytes = b""        # mp3 或 wav
+    audio_kind: str = ""      # "mp3" | "wav"
     coverage_pct: float = 100.0   # 古音模式覆盖率；自然模式恒 100
     approx_chars: int = 0
     error: Optional[str] = None
@@ -44,17 +45,18 @@ def make_turn(user_text: str, mode: str = MODE_NATURAL,
             自然模式断网回退古音时同样使用）
     """
     turn = Turn(user_text=user_text, translation="", reply="",
-                source="", mode=mode, audio=b"", audio_kind="",
-                error=None)
+                reply_modern="", source="", mode=mode,
+                audio=b"", audio_kind="", error=None)
     if not user_text or not user_text.strip():
         turn.error = "empty_input"
         return turn
 
-    # 1) 文言文翻译 + 回答
+    # 1) 文言文翻译 + 回答（含白话版回答）
     try:
         gen = llm_client.generate_turn(user_text, history)
         turn.translation = gen.get("translation", "")
         turn.reply = gen.get("reply", "")
+        turn.reply_modern = gen.get("reply_modern", "")
         turn.source = gen.get("source", "local")
     except Exception as e:
         turn.error = f"llm_error: {e}"
@@ -63,6 +65,9 @@ def make_turn(user_text: str, mode: str = MODE_NATURAL,
     if not turn.reply.strip():
         turn.reply = "善。"
         turn.source = "fallback"
+    # 白话版回答缺失时，回退到文言回答本身（"现代汉语朗读"仍有内容可念）
+    if not turn.reply_modern.strip():
+        turn.reply_modern = turn.reply
 
     # 2) 语音路由
     if mode == MODE_ANCIENT:

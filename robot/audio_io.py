@@ -12,6 +12,7 @@ import io
 import os
 import subprocess
 import tempfile
+import threading
 import wave
 
 try:
@@ -39,6 +40,7 @@ class AudioIO:
         self.playback_device = playback_device
         self.sample_rate = sample_rate
         self._play_proc = None
+        self._play_tmp = None
 
     # ---------- 录制 ----------
     def record(self, seconds: float, out_path: str) -> bool:
@@ -70,19 +72,36 @@ class AudioIO:
         return data
 
     def play_wav(self, wav_bytes: bytes) -> bool:
-        """播放 WAV 字节串（阻塞直到播完；可被 stop() 打断）
+        """播放 WAV 字节串（**阻塞**直到播完；可被 stop() 打断）
 
         优先 pw-play（PipeWire 默认输出，跟随当前选择的设备）；
         失败回退 aplay 直连 playback_device。
+        界面按钮请用 play_async()，避免 UI 卡到播完。
         """
-        wav_bytes = self._to_wav_bytes(wav_bytes)
         self.stop()
+        return self._play_blocking(wav_bytes)
+
+    def play_async(self, wav_bytes: bytes) -> bool:
+        """后台播放（立即返回 True，音频在后台播完；可被 stop() 打断）。
+
+        任何音频格式（mp3/wav 自动解码）。
+        """
+        self.stop()
+        t = threading.Thread(target=self._play_blocking,
+                             args=(wav_bytes,), daemon=True)
+        t.start()
+        return True
+
+    def _play_blocking(self, wav_bytes: bytes) -> bool:
+        """实际播放（阻塞）。调用方负责先 stop()。"""
+        wav_bytes = self._to_wav_bytes(wav_bytes)
         # 1) pw-play（写临时文件）
         tmp = None
         try:
             tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
             tmp.write(wav_bytes)
             tmp.close()
+            self._play_tmp = tmp.name
             self._play_proc = subprocess.Popen(["pw-play", tmp.name])
             self._play_proc.wait()
             if self._play_proc.returncode == 0:
@@ -98,6 +117,7 @@ class AudioIO:
                     os.unlink(tmp.name)
                 except OSError:
                     pass
+            self._play_tmp = None
         # 2) aplay 直连回退
         try:
             self._play_proc = subprocess.Popen(

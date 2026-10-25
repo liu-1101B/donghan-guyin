@@ -81,7 +81,8 @@ python -m robot.main --text "今天天气真好"
 streamlit run robot/app.py
 #   浏览器打开 http://localhost:8501
 #   功能：文字/麦克风输入、双模式、音色+语速+基频滑杆、
-#         浏览器内播放 / 一键"设备播放"（走 PipeWire 蓝牙）、
+#         浏览器内播放 / 一键"设备播放"（走 PipeWire 蓝牙，后台不阻塞）、
+#         扩展朗读：🗣 回答·现代汉语读 / 📜 我的话·古汉语翻译读、
 #         IPA 与逐字音韵表、多轮历史
 ```
 
@@ -173,9 +174,9 @@ config/settings.yaml # 音频设备、对话容量、默认模式
 | `record()` | robot/audio_io.py | 时长 | WAV 文件 |
 | `transcribe_wav()` | services/asr_client.py | WAV | 现代汉语文本 |
 | `generate_turn()` | services/llm_client.py | 文本+历史 | `{translation, reply}` |
-| `speak_natural()` | services/tts_client.py | 文本 | MP3 字节 |
-| `synthesize_ancient()` | language/ancient_tts.py | 文本 | (WAV 字节, 覆盖率) |
-| `play_wav()/play_mp3()` | robot/audio_io.py | 字节 | 播放状态 |
+| `speak_natural(text, voice, rate)` | services/tts_client.py | 文本+音色+语速 | MP3 字节 |
+| `synthesize_ancient(text, pitch, speed)` | language/ancient_tts.py | 文本+基频+语速 | (WAV 字节, 覆盖率) |
+| `play_wav()/play_async()` | robot/audio_io.py | 字节 | 播放状态（async 后台不阻塞） |
 
 ## 关于"东汉古音"的说明
 
