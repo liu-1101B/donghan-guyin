@@ -120,12 +120,19 @@ def text_to_ipa(classical: str) -> AncientResult:
     )
 
 
-def synthesize_ancient(classical: str, pitch: int = 130) -> tuple:
-    """文言文 → (WAV bytes, AncientResult)。空文本返回 (b'', result)"""
+def synthesize_ancient(classical: str, pitch: int = 130,
+                       speed: float = 1.0) -> tuple:
+    """文言文 → (WAV bytes, AncientResult)。空文本返回 (b'', result)
+
+    pitch: 基频 Hz（音色高低）
+    speed: 语速倍率，1.0 正常；<1 更慢（字间停顿加大），>1 更快
+    """
     result = text_to_ipa(classical)
     if not result.ipa_text.strip():
         return b'', result
-    audio = synthesize_text(result.ipa_text, pitch=pitch)
+    # 语速 → 字间停顿：正常 0.08s，放慢到 0.20s，加快到 0.03s
+    word_gap = max(0.03, min(0.20, 0.08 / max(0.4, speed)))
+    audio = synthesize_text(result.ipa_text, word_gap=word_gap, pitch=pitch)
     if audio is None or len(audio) == 0:
         return b'', result
     return audio_to_wav_bytes(audio, SAMPLE_RATE), result

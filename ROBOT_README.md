@@ -76,6 +76,13 @@ python -m robot.main --mode ancient # 默认东汉古音
 
 # 3) 免麦克风测试
 python -m robot.main --text "今天天气真好"
+
+# 4) 网页使用界面（推荐，风格对齐原项目 guyun_app.py）
+streamlit run robot/app.py
+#   浏览器打开 http://localhost:8501
+#   功能：文字/麦克风输入、双模式、音色+语速+基频滑杆、
+#         浏览器内播放 / 一键"设备播放"（走 PipeWire 蓝牙）、
+#         IPA 与逐字音韵表、多轮历史
 ```
 
 交互键位：
@@ -139,10 +146,11 @@ JetPack 的 `/usr/lib/systemd/system/bluetooth.service.d/nv-bluetooth-service.co
 ```
 robot/
 ├── main.py          # 主循环（按键说话 / selftest / text 模式）
+├── app.py           # Streamlit 网页界面（音色/语速/基频滑杆，推荐入口）
 ├── audio_io.py      # arecord 采音 + 播放（pw-play 优先走默认输出, aplay 回退；MP3 经 miniaudio 解码）
 ├── bt_connect.sh    # 蓝牙音箱：连接 + 设为默认输出 + 音量校正
 ├── session.py       # 多轮对话状态（默认保留 8 轮）
-└── voice_router.py  # 自然语音 / 东汉古音 运行时切换
+└── voice_router.py  # 自然语音 / 东汉古音 运行时切换（持有音色/语速参数）
 
 services/
 ├── asr_client.py    # 本地 Vosk 识别（自动重采样/降声道），云端接口预留

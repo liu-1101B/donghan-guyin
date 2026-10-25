@@ -32,7 +32,17 @@ class Turn:
 
 
 def make_turn(user_text: str, mode: str = MODE_NATURAL,
-              history=None, pitch: int = 130) -> Turn:
+              history=None, pitch: int = 130,
+              voice: str = None, rate: str = None,
+              speed: float = None) -> Turn:
+    """单轮处理。音色/语速参数：
+
+    voice : 自然语音的 Edge TTS 音色 id（None=用默认）
+    rate  : 自然语音语速（如 "-10%"；None=用默认）
+    speed : 古音语速倍率（1.0 正常；None=用默认）
+    pitch : 古音基频 Hz（两种模式下都生效：古音直接合成，
+            自然模式断网回退古音时同样使用）
+    """
     turn = Turn(user_text=user_text, translation="", reply="",
                 source="", mode=mode, audio=b"", audio_kind="",
                 error=None)
@@ -56,26 +66,28 @@ def make_turn(user_text: str, mode: str = MODE_NATURAL,
 
     # 2) 语音路由
     if mode == MODE_ANCIENT:
-        wav, result = synthesize_ancient(turn.reply, pitch=pitch)
+        wav, result = synthesize_ancient(turn.reply, pitch=pitch,
+                                         speed=speed or 1.0)
         if wav:
             turn.audio, turn.audio_kind = wav, "wav"
             turn.coverage_pct = result.coverage_pct
             turn.approx_chars = result.approx
         else:
             # 古音合成失败 → 回退自然语音
-            mp3 = tts_client.speak_natural(turn.reply)
+            mp3 = tts_client.speak_natural(turn.reply, voice=voice, rate=rate)
             if mp3:
                 turn.audio, turn.audio_kind = mp3, "mp3"
                 turn.coverage_pct = 0.0
             else:
                 turn.error = "ancient_synth_failed"
     else:
-        mp3 = tts_client.speak_natural(turn.reply)
+        mp3 = tts_client.speak_natural(turn.reply, voice=voice, rate=rate)
         if mp3:
             turn.audio, turn.audio_kind = mp3, "mp3"
         else:
             # Edge TTS 不可用（断网）→ 回退本地古音合成
-            wav, result = synthesize_ancient(turn.reply, pitch=pitch)
+            wav, result = synthesize_ancient(turn.reply, pitch=pitch,
+                                             speed=speed or 1.0)
             if wav:
                 turn.audio, turn.audio_kind = wav, "wav"
                 turn.coverage_pct = result.coverage_pct

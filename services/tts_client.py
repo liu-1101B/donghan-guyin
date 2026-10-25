@@ -54,11 +54,11 @@ def _port_open(host, port, timeout=1.0):
         return False
 
 
-def _edge_tts_sync(text: str, voice: str):
+def _edge_tts_sync(text: str, voice: str, rate: str = RATE):
     last_err = None
     for proxy in _candidate_proxies():
         try:
-            tts = edge_tts.Communicate(text, voice, rate=RATE, proxy=proxy)
+            tts = edge_tts.Communicate(text, voice, rate=rate, proxy=proxy)
             tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
             tmp.close()
             try:
@@ -78,16 +78,31 @@ def _edge_tts_sync(text: str, voice: str):
     raise last_err if last_err else RuntimeError("Edge TTS 无可用网络路径")
 
 
-def speak_natural(text: str, voice: str = VOICE):
-    """文言文 → MP3 字节串。Edge TTS 失败返回 None（调用方可回退到古音合成）。"""
+def speak_natural(text: str, voice: str = VOICE, rate: str = RATE):
+    """文言文 → MP3 字节串。Edge TTS 失败返回 None（调用方可回退到古音合成）。
+
+    voice: Edge TTS 音色 id（如 zh-CN-YunxiNeural）
+    rate : 语速字符串（如 "-10%" 稍慢，"+10%" 稍快）
+    """
     if not EDGE_TTS_AVAILABLE:
         return None
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-            return ex.submit(_edge_tts_sync, text, voice).result(timeout=30)
+            return ex.submit(_edge_tts_sync, text, voice, rate).result(timeout=30)
     except Exception as e:
         print(f"[tts] Edge TTS 失败: {e}")
         return None
+
+
+def available_voices() -> list:
+    """返回常用中文 Edge TTS 音色列表 [(显示名, voice_id), ...]"""
+    return [
+        ("云希（男·沉稳）", "zh-CN-YunxiNeural"),
+        ("云健（男·活力）", "zh-CN-YunjianNeural"),
+        ("晓晓（女·温柔）", "zh-CN-XiaoxiaoNeural"),
+        ("晓伊（女·明亮）", "zh-CN-XiaoyiNeural"),
+        ("晓程（男·磁性）", "zh-CN-XiaochengNeural"),
+    ]
 
 
 def is_cloud_configured() -> bool:

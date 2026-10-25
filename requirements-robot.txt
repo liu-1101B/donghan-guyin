@@ -1,4 +1,4 @@
-# 机器人核心依赖（不含 Streamlit 网页界面）
+# 机器人依赖（核心 + Streamlit 网页界面 robot/app.py）
 # 在 Jetson AGX Orin (Ubuntu 24.04 / Python 3.12 / aarch64) 上验证
 numpy>=1.24.0
 scipy>=1.10.0
@@ -17,3 +17,6 @@ miniaudio>=1.60
 # 自然语音合成（在线；断网时自动回退本地古音合成）
 edge-tts>=6.0.0
 opencc-python-reimplemented>=0.1.0
+
+# 网页使用界面（robot/app.py，风格对齐原项目 guyun_app.py）
+streamlit>=1.28.0
