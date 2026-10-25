@@ -195,6 +195,77 @@ class AudioIO:
             except Exception:
                 pass
 
+
+# ---------- A2DP 保活 ----------
+# WirePlumber 的 suspend-node.lua 会把空闲 5 秒以上的音频节点挂起；
+# A2DP sink 被挂起后 Jetson 重协商经常卡死（"假连接"：显示已连接但
+# pw-play 永久阻塞）。保活 = 持续向默认输出喂一路静音流，让 A2DP 通道
+# 永不空闲。进程级单例（pidfile 跨热重载安全）。
+
+_KEEPALIVE_PIDFILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    ".keepalive.pid")
+
+
+def _keepalive_running() -> bool:
+    try:
+        with open(_KEEPALIVE_PIDFILE) as f:
+            pid = int(f.read().strip())
+        os.kill(pid, 0)
+        return True
+    except Exception:
+        return False
+
+
+def _keepalive_feed(proc) -> None:
+    """持续向 pw-play 的 stdin 写静音块，直到进程退出。"""
+    chunk = b"\x00\x00" * 16000  # 0.5s @16kHz mono s16le = 32KB
+    try:
+        while proc.poll() is None:
+            proc.stdin.write(chunk)
+            time.sleep(0.4)
+    except (BrokenPipeError, OSError):
+        pass
+    except Exception:
+        pass
+
+
+def start_keepalive() -> bool:
+    """启动 A2DP 保活静音流（幂等，已存活则直接返回 True）。"""
+    if _keepalive_running():
+        return True
+    try:
+        p = subprocess.Popen(
+            ["pw-play", "--rate", "16000", "--channels", "1",
+             "--format", "s16", "-"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL)
+    except (FileNotFoundError, OSError):
+        return False
+    if p.poll() is not None:
+        return False
+    try:
+        with open(_KEEPALIVE_PIDFILE, "w") as f:
+            f.write(str(p.pid))
+    except OSError:
+        pass
+    threading.Thread(target=_keepalive_feed, args=(p,), daemon=True).start()
+    return True
+
+
+def stop_keepalive() -> None:
+    """停止保活静音流。"""
+    try:
+        with open(_KEEPALIVE_PIDFILE) as f:
+            os.kill(int(f.read().strip()), 15)
+    except Exception:
+        pass
+    try:
+        os.unlink(_KEEPALIVE_PIDFILE)
+    except OSError:
+        pass
+
     # ---------- 自检 ----------
     def selftest(self, path: str = "audio_out/selftest.wav") -> bool:
         """录制 2 秒并回放，验证麦克风+扬声器链路"""

@@ -144,13 +144,29 @@ JetPack 的 `/usr/lib/systemd/system/bluetooth.service.d/nv-bluetooth-service.co
 5. **A2DP 假连接**：显示 Connected 但 `pw-play` 卡住不返回（3 秒的音
    等 30 秒不放完）→ 通道挂死了，跑 `./robot/bt_reset.sh` 强制断连重连即可
 
-### A2DP 假连接（已遇到并解决）
+### A2DP 假连接（已遇到并根治）
 
-蓝牙设备显示已连接、sink 也是默认，但音频流通道实际已挂起：
-`pw-play` 会一直阻塞不返回，音箱完全没声。恢复方法（已验证）：
+现象：蓝牙显示已连接、sink 也是默认，但音频流通道实际已挂起：
+`pw-play` 一直阻塞不返回（3 秒的音等 30 秒不放完），音箱完全没声。
+
+**根因**：WirePlumber 的 `suspend-node.lua` 会把**空闲 5 秒以上**的音频
+节点挂起。A2DP sink 被挂起后，Jetson 上重新协商 A2DP 经常卡死，通道就
+成了"假连接"。
+
+**根治（已实现）**：`robot/audio_io.py` 的 A2DP 保活——app 启动时
+`start_keepalive()` 向默认输出持续喂一路**静音流**（16kHz mono，人耳
+不可闻），让 A2DP sink 永不空闲、永不挂起。进程级单例（pidfile
+`.keepalive.pid`），热重载/多次启动幂等。已验证：保活进程空闲 60 秒后
+通道仍存活。
+
+**兜底**：界面"设备播放/扩展朗读"按钮播放前先 0.3s 探测通道
+（`AudioIO.probe()`）；若已挂死，自动跑 `./robot/bt_reset.sh`
+（断开→重连→确认 sink→3 秒测试音自检）恢复后再播，并重新拉起保活。
+
+手动恢复（界面外的终端里）：
 
 ```bash
-./robot/bt_reset.sh   # 断开→重连→确认 sink→播 3 秒测试音自检
+./robot/bt_reset.sh
 ```
 
 ## 目录结构（新增部分）
@@ -160,7 +176,9 @@ robot/
 ├── main.py          # 主循环（按键说话 / selftest / text 模式）
 ├── app.py           # Streamlit 网页界面（音色/语速/基频滑杆，推荐入口）
 ├── audio_io.py      # arecord 采音 + 播放（pw-play 优先走默认输出, aplay 回退；MP3 经 miniaudio 解码）
+│                    #   含 A2DP 保活 start_keepalive()/stop_keepalive() 与通道探测 probe()
 ├── bt_connect.sh    # 蓝牙音箱：连接 + 设为默认输出 + 音量校正
+├── bt_reset.sh      # A2DP 假连接恢复：断开→重连→确认 sink→测试音自检
 ├── session.py       # 多轮对话状态（默认保留 8 轮）
 └── voice_router.py  # 自然语音 / 东汉古音 运行时切换（持有音色/语速参数）
 
@@ -188,6 +206,8 @@ config/settings.yaml # 音频设备、对话容量、默认模式
 | `speak_natural(text, voice, rate)` | services/tts_client.py | 文本+音色+语速 | MP3 字节 |
 | `synthesize_ancient(text, pitch, speed)` | language/ancient_tts.py | 文本+基频+语速 | (WAV 字节, 覆盖率) |
 | `play_wav()/play_async()` | robot/audio_io.py | 字节 | 播放状态（async 后台不阻塞） |
+| `probe(timeout=6)` | robot/audio_io.py | — | 通道是否活着（False=假连接） |
+| `start_keepalive()/stop_keepalive()` | robot/audio_io.py | — | A2DP 静音保活流（幂等，进程单例） |
 
 ## 关于"东汉古音"的说明
 

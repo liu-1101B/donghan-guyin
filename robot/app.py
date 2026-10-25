@@ -19,6 +19,7 @@ import subprocess
 import sys
 import time
 import base64
+import threading
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -92,7 +93,7 @@ _autoreload_changed_modules()
 import yaml
 from robot.session import Session
 from robot.voice_router import VoiceRouter
-from robot.audio_io import AudioIO
+from robot.audio_io import AudioIO, start_keepalive
 from services import tts_client
 from language.ancient_tts import text_to_ipa, synthesize_ancient
 from phonology_db import lookup_char, EASTERN_HAN_DB
@@ -208,9 +209,30 @@ def play_to_device(kind: str, text: str, router: VoiceRouter) -> bool:
     return True
 
 
+def _ensure_playable(ai) -> bool:
+    """确保播放通道可用：探测→(挂死则)自动重连→再探测。
+
+    正常时 ~0.4s；仅 A2DP 假连接时触发一次断连重连（~15s）。
+    重连成功后顺带把保活静音流拉起，避免再次挂起。
+    """
+    if ai.probe():
+        return True
+    with st.spinner("蓝牙通道异常，正在自动重连…"):
+        subprocess.run([os.path.join(ROOT, "robot", "bt_reset.sh")],
+                       capture_output=True, timeout=90)
+    ok = ai.probe()
+    if ok:
+        start_keepalive()
+    return ok
+
+
 # ---------- 页面 ----------
 st.set_page_config(page_title="古音机器人 · 东汉洛阳官音",
                    page_icon=":classical_building:", layout="wide")
+
+# A2DP 保活：持续向默认输出喂静音流，防止 WirePlumber 把空闲的蓝牙
+# sink 挂起（挂起后重协商常卡死 → "假连接"无声）。幂等，已存活则跳过。
+start_keepalive()
 
 st.markdown("""
 <style>
@@ -432,24 +454,19 @@ with col2:
         with c2:
             st.markdown(f'<div class="audio-card"><strong>设备播放</strong></div>',
                         unsafe_allow_html=True)
-            # 后台发送：不阻塞界面（pw-play 不再等待播完）。
-            # 先探测通道（0.3s）；若 A2DP 假连接(通道挂死)则自动重连再播。
+            # 设备播放：先探测通道（正常时 ~0.3s）；若 A2DP 假连接(通道挂死)
+            # 自动断连重连再播。保活服务在时探测几乎永远走快路径。
             if st.button("▶ 蓝牙/默认设备", use_container_width=True,
                          key="dev_play"):
                 ai = get_audio_io()
-                if ai.probe():
+                with st.spinner("检查播放通道…"):
+                    ok = _ensure_playable(ai)
+                if ok:
                     ai.play_async(res["audio"])
                     st.success("已发送到默认输出设备（后台播放）")
                 else:
-                    with st.spinner("播放通道异常，正在重连蓝牙…"):
-                        r = subprocess.run(
-                            [os.path.join(ROOT, "robot", "bt_reset.sh")],
-                            capture_output=True, timeout=90)
-                    if ai.probe():
-                        ai.play_async(res["audio"])
-                        st.warning("蓝牙通道已重连，正在播放")
-                    else:
-                        st.error("重连后仍无法播放，请检查音箱电源/距离")
+                    st.error("播放通道异常：自动重连后仍无法播放，"
+                             "请检查音箱电源/距离/静音开关")
         with c3:
             fname = f"guyin_{int(res['ms'])}.{res['audio_kind']}"
             st.download_button("⬇ 下载", res["audio"],
@@ -467,10 +484,14 @@ with col2:
                 with st.spinner("合成现代汉语朗读…"):
                     audio, k = synth_extended("modern", text, router)
                 if audio:
-                    get_audio_io().play_async(audio)
-                    st.session_state.ext_audio = (audio, k)
-                    st.session_state.ext_label = "回答·现代汉语"
-                    st.success("正在播放：回答（现代汉语）")
+                    ai = get_audio_io()
+                    if _ensure_playable(ai):
+                        ai.play_async(audio)
+                        st.session_state.ext_audio = (audio, k)
+                        st.session_state.ext_label = "回答·现代汉语"
+                        st.success("正在播放：回答（现代汉语）")
+                    else:
+                        st.error("播放通道异常，自动重连后仍无法播放")
                 else:
                     st.warning("合成失败（网络不可用且古音合成失败）")
         with cB:
@@ -481,10 +502,14 @@ with col2:
                 text = res.get("translation") or res["user"]
                 audio, k = synth_extended("ancient_trans", text, router)
                 if audio:
-                    get_audio_io().play_async(audio)
-                    st.session_state.ext_audio = (audio, k)
-                    st.session_state.ext_label = "我的翻译·东汉古音"
-                    st.success("正在播放：我的古汉语翻译（东汉音）")
+                    ai = get_audio_io()
+                    if _ensure_playable(ai):
+                        ai.play_async(audio)
+                        st.session_state.ext_audio = (audio, k)
+                        st.session_state.ext_label = "我的翻译·东汉古音"
+                        st.success("正在播放：我的古汉语翻译（东汉音）")
+                    else:
+                        st.error("播放通道异常，自动重连后仍无法播放")
                 else:
                     st.warning("古音合成失败（无有效字符？）")
 
