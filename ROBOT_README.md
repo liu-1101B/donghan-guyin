@@ -149,19 +149,32 @@ JetPack 的 `/usr/lib/systemd/system/bluetooth.service.d/nv-bluetooth-service.co
 现象：蓝牙显示已连接、sink 也是默认，但音频流通道实际已挂起：
 `pw-play` 一直阻塞不返回（3 秒的音等 30 秒不放完），音箱完全没声。
 
-**两个已实测的故障模式**（2026-10-25 定位）：
+**故障模式（2026-10-25 逐一定位）**：
 
-1. **A2DP profile 静默断开**：bluez 日志 `a2dp-sink: connected ->
-   disconnected` 而 L2CAP 连接仍在。PipeWire 蓝牙 sink 消失 → 默认输出
-   掉回**无喇叭的空接口**（Built-in Analog）→ `pw-play` 不报错但全程无声。
-   这是"没声音"最常见的一种。
-2. **A2DP 通道挂死**（"假连接"）：WirePlumber `suspend-node.lua` 会把
-   空闲 >5s 的节点挂起；A2DP 重协商卡死 → `pw-play` 永久阻塞。
+1. **WirePlumber 自动挂起 → A2DP 重协商卡死**（主因）：
+   `suspend-node.lua` 把空闲 >5s 的音频节点挂起；Jetson 上 A2DP 重新
+   协商经常卡死（"假连接"：`pw-play` 永久阻塞或音箱无声）。
+2. **A2DP profile 静默断开**：bluez 日志 `a2dp-sink: connected ->
+   disconnected` 而 L2CAP 仍在 → PipeWire 蓝牙 sink 消失 → 默认输出掉回
+   **无喇叭的空接口** → `pw-play` 不报错但全程无声。
+3. **持续静音流"保活"——失败**：该音箱（Relink）约 1.5 分钟后主动断开
+   A2DP profile，保活反而加速故障。已放弃。
 
-**曾试过的方案**：持续静音流"保活"（让 sink 永不空闲）——**失败**。
-该音箱（Relink）约 1.5 分钟后主动断开 A2DP profile，保活反而加速故障。
+**根治（系统级，已验证）**：禁用蓝牙输出节点的自动挂起——
+`/etc/xdg/wireplumber/wireplumber.conf`：
 
-**现行方案（按需检查，已验证）**：界面播放按钮播放前做三重检查
+```
+wireplumber.rules = [
+  { matches = [ { node.name = "bluez_output.*" } ]
+    actions.update-props = { "session.suspend-timeout-seconds" = 0 } }
+]
+```
+
+`systemctl --user restart wireplumber` 生效。验证：节点空闲 15s/90s
+（原 5s 阈值倍数）后通道仍活。**系统升级/重装 wireplumber 后需重建
+此文件**（内容即上方规则）。
+
+**兜底（应用级）**：界面播放按钮播放前三重检查
 （`robot/audio_io.py::bt_status()` + `AudioIO.probe()`）：
 A2DP sink 存在 + 是默认输出 + 0.3s 探测音播得通。任一失败 → 自动
 `./robot/bt_reset.sh`（断开→重连→**显式 `wpctl set-default`**→3s
