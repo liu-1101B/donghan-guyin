@@ -22,8 +22,8 @@
       │
       ▼
  文言文翻译 + 回答 (language/turn_engine.py)
-      │   默认本地回退：词典翻译 + 规则应答
-      │   配置 LLM_API_KEY 后走 OpenAI 兼容接口
+      │   默认：本地 Qwen3-30B (llama-server :8080)
+      │   可选：LLM_API_KEY 走 OpenAI 兼容云端；兜底：词典+规则
       ▼
  语音路由 (robot/voice_router.py, m 键运行时切换)
    ┌──────────────┴──────────────┐
@@ -33,13 +33,16 @@
  → MP3                          → synthesize_text() → WAV
    └──────────────┬──────────────┘
                   ▼
-          USB 有源扬声器 (aplay)
+          PipeWire 默认输出 (pw-play: 蓝牙音箱/USB 音箱)
 ```
 
 ## 环境（本机已验证）
 
 - Jetson AGX Orin, L4T R39.2.1 (JetPack 6.x), Ubuntu 24.04, Python 3.12, aarch64
 - USB 音频一体机：card 2（采集 + 播放），`plughw:2,0`
+  - **注意**：该 USB 3合1 耳机的喇叭侧若未接设备，则 `plughw:2,0` 输出无声（物理未接）。
+  - 麦克风侧接好即可采集（`arecord -D plughw:2,0`）。
+- 扬声器：蓝牙音箱（PipeWire 默认输出自动跟随），或把耳机插到 USB 一体机
 - 麦克风/扬声器权限：用户需在 `audio` 组（本机 lab006 已是）
 
 ## 安装
@@ -86,12 +89,58 @@ python -m robot.main --text "今天天气真好"
 | `c` | 清空对话历史 |
 | `q` | 退出 |
 
+## 蓝牙音箱输出（本机已验证）
+
+播放通道走 **PipeWire 默认输出**（`pw-play`），所以只要蓝牙音箱是当前
+默认 sink，机器人所有声音都会自动从音箱出来；`aplay` 直连仅作回退。
+
+### 一次性配对（已完成）
+
+```bash
+bluetoothctl
+  scan on                      # 音箱先开配对模式(灯快闪)
+  pair <MAC>                   # 本机音箱: F8:D3:F0:A9:08:68 (Relink脑机接口)
+  trust <MAC>
+  connect <MAC>
+  quit
+```
+
+### 每次开机/重启后
+
+```bash
+./robot/bt_connect.sh          # 连接 + 设为默认输出 + 音量过低时抬到 60%
+```
+
+### ⚠️ NVIDIA Jetson 关键坑：蓝牙 A2DP 被官方禁用
+
+JetPack 的 `/usr/lib/systemd/system/bluetooth.service.d/nv-bluetooth-service.conf`
+用 `--noplugin=audio,a2dp,avrcp,sap` 把蓝牙音频插件整个禁了，导致**能配对、
+能连接、但永远不出声**（`journalctl -u bluetooth` 可见
+`Excluding (cli) a2dp`）。已用 override 修复：
+
+```
+/etc/systemd/system/bluetooth.service.d/zz-restore-a2dp.conf
+    ExecStart=
+    ExecStart=/usr/libexec/bluetooth/bluetoothd -d --noplugin=audio,sap
+```
+
+（只保留禁用 HFP 音频与 SAP；A2DP/AVRCP 重新启用。NVIDIA 原文件保留在系统路径 `/usr/lib/systemd/system/bluetooth.service.d/nv-bluetooth-service.conf` 未改动，本地副本备份为 `nv-bluetooth-service.conf.bak`。）若系统升级覆盖，需重跑
+`sudo systemctl daemon-reload && sudo systemctl restart bluetooth`。
+
+### 排查口诀（无声时按顺序查）
+
+1. `wpctl status` → 蓝牙 sink 在不在、是不是 `*` 默认、`[vol:]` 是否 > 0
+2. `bluetoothctl info <MAC>` → `Connected: yes`？
+3. `journalctl -u bluetooth | grep -i a2dp` → 有没有 `Excluding (cli) a2dp`
+4. `pw-play audio_out/tone440.wav` → 直接听测试音，隔离上层代码
+
 ## 目录结构（新增部分）
 
 ```
 robot/
 ├── main.py          # 主循环（按键说话 / selftest / text 模式）
-├── audio_io.py      # arecord 采音 + aplay 播放（MP3 经 miniaudio 解码）
+├── audio_io.py      # arecord 采音 + 播放（pw-play 优先走默认输出, aplay 回退；MP3 经 miniaudio 解码）
+├── bt_connect.sh    # 蓝牙音箱：连接 + 设为默认输出 + 音量校正
 ├── session.py       # 多轮对话状态（默认保留 8 轮）
 └── voice_router.py  # 自然语音 / 东汉古音 运行时切换
 
@@ -131,7 +180,10 @@ config/settings.yaml # 音频设备、对话容量、默认模式
 
 - 当前网络环境 DNS/代理不稳定：Edge TTS 自动在"代理→直连"间回退；断网时自然语音自动回退本地古音合成。
 - 小模型 Vosk 词汇有限，识别偶有错字（"天朗气清"→"天冷起清"）；后续可换 vosk 大模型或云端 ASR。
-- 本机有 PipeWire：播放走 `aplay` 直连（已验证 MMAP 硬件流），失败自动回退 `pw-play`。
-  本机唯一"扬声器"是 USB 耳麦（card 2，GeneralPlus 三合一：麦+喇叭+线控）；
-  HDMI 显示器无内置喇叭（EDID 无音频位），想外放需另接音箱。
-- 后续：唤醒词、播放打断、超时与联网失败提示、开机自启。
+- 播放通道：`pw-play` 优先（走 PipeWire 默认输出，自动跟随当前设备，如蓝牙音箱），
+  回退 `aplay -D plughw:2,0` 直连。想换音箱/耳机只需 `wpctl set-default <sink>`，
+  或用 `./robot/bt_connect.sh`，无需改代码。
+- 本机唯一"内置扬声器"是 USB 耳麦（card 2，GeneralPlus 三合一：麦+喇叭+线控），
+  但其喇叭侧未接线时 `plughw:2,0` 无声（物理未接）；HDMI 显示器无内置喇叭
+  （EDID 无音频位）。外放已接蓝牙音箱（见上一节）。
+- 后续：唤醒词、播放打断、超时与联网失败提示、开机自启（bt_connect.sh + 主程序）。
