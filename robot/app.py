@@ -15,6 +15,7 @@ robot/app.py
     - 多轮对话历史（默认 8 轮）
 """
 import os
+import subprocess
 import sys
 import time
 import base64
@@ -411,11 +412,24 @@ with col2:
         with c2:
             st.markdown(f'<div class="audio-card"><strong>设备播放</strong></div>',
                         unsafe_allow_html=True)
-            # 后台发送：不阻塞界面（pw-play 不再等待播完）
+            # 后台发送：不阻塞界面（pw-play 不再等待播完）。
+            # 先探测通道（0.3s）；若 A2DP 假连接(通道挂死)则自动重连再播。
             if st.button("▶ 蓝牙/默认设备", use_container_width=True,
                          key="dev_play"):
-                get_audio_io().play_async(res["audio"])
-                st.success("已发送到默认输出设备（后台播放）")
+                ai = get_audio_io()
+                if ai.probe():
+                    ai.play_async(res["audio"])
+                    st.success("已发送到默认输出设备（后台播放）")
+                else:
+                    with st.spinner("播放通道异常，正在重连蓝牙…"):
+                        r = subprocess.run(
+                            [os.path.join(ROOT, "robot", "bt_reset.sh")],
+                            capture_output=True, timeout=90)
+                    if ai.probe():
+                        ai.play_async(res["audio"])
+                        st.warning("蓝牙通道已重连，正在播放")
+                    else:
+                        st.error("重连后仍无法播放，请检查音箱电源/距离")
         with c3:
             fname = f"guyin_{int(res['ms'])}.{res['audio_kind']}"
             st.download_button("⬇ 下载", res["audio"],

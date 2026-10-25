@@ -13,6 +13,7 @@ import os
 import subprocess
 import tempfile
 import threading
+import time
 import wave
 
 try:
@@ -91,6 +92,46 @@ class AudioIO:
                              args=(wav_bytes,), daemon=True)
         t.start()
         return True
+
+    def probe(self, timeout: float = 6.0) -> bool:
+        """探测播放通道是否活着：生成 0.3s 正弦波试播，限时等待。
+
+        返回 True = 通道正常；False = 疑似 A2DP 假连接（通道挂死）。
+        探测音人耳几乎不可闻（300Hz 短音、低音量），仅作自检。
+        """
+        import math
+        sr = 16000
+        n = int(sr * 0.3)
+        pcm = bytearray()
+        for i in range(n):
+            v = int(8000 * math.sin(2 * math.pi * 300 * i / sr))
+            pcm += v.to_bytes(2, "little", signed=True)
+        wav = _pcm_to_wav(bytes(pcm), sr, 1)
+        tmp = None
+        proc = None
+        try:
+            tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+            tmp.write(wav)
+            tmp.close()
+            proc = subprocess.Popen(["pw-play", tmp.name])
+            proc.wait(timeout=timeout)
+            return proc.returncode == 0
+        except subprocess.TimeoutExpired:
+            return False
+        except Exception:
+            return False
+        finally:
+            if proc and proc.poll() is None:
+                proc.kill()
+                try:
+                    proc.wait(timeout=2)
+                except Exception:
+                    pass
+            if tmp and os.path.exists(tmp.name):
+                try:
+                    os.unlink(tmp.name)
+                except OSError:
+                    pass
 
     def _play_blocking(self, wav_bytes: bytes) -> bool:
         """实际播放（阻塞）。调用方负责先 stop()。"""

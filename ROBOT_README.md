@@ -141,6 +141,17 @@ JetPack 的 `/usr/lib/systemd/system/bluetooth.service.d/nv-bluetooth-service.co
 2. `bluetoothctl info <MAC>` → `Connected: yes`？
 3. `journalctl -u bluetooth | grep -i a2dp` → 有没有 `Excluding (cli) a2dp`
 4. `pw-play audio_out/tone440.wav` → 直接听测试音，隔离上层代码
+5. **A2DP 假连接**：显示 Connected 但 `pw-play` 卡住不返回（3 秒的音
+   等 30 秒不放完）→ 通道挂死了，跑 `./robot/bt_reset.sh` 强制断连重连即可
+
+### A2DP 假连接（已遇到并解决）
+
+蓝牙设备显示已连接、sink 也是默认，但音频流通道实际已挂起：
+`pw-play` 会一直阻塞不返回，音箱完全没声。恢复方法（已验证）：
+
+```bash
+./robot/bt_reset.sh   # 断开→重连→确认 sink→播 3 秒测试音自检
+```
 
 ## 目录结构（新增部分）
 
