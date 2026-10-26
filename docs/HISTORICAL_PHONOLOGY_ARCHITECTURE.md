@@ -46,4 +46,4 @@
 
 在仓库根目录运行：
 
-    python -m unittest tests.test_historical_phonology
+    python -m unittest discover -s tests -p "test_historical_phonology.py"
