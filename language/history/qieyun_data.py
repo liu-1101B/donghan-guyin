@@ -18,7 +18,7 @@ DATA_PATH = (
 )
 SOURCE_URL = (
     "https://github.com/nk2028/tshet-uinh-data/blob/"
-    "master/反切音韻地位/廣韻反切音韻地位表.csv"
+    "main/反切音韻地位/廣韻反切音韻地位表.csv"
 )
 SOURCE_BLOB_SHA = "93ca1b1551b30bba9c76fe21078f156b8299d9cc"
 
