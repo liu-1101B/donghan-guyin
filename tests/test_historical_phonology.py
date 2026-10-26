@@ -2,7 +2,9 @@
 import unittest
 from language.history import (TIMELINE, get_period, get_system, lookup_reading,
                               lookup_qieyun_positions, period_at,
-                              qieyun_record_count, systems_for_period,\n                              lookup_phono_ml, phono_ml_record_count,\n                              lookup_zhongyuan, zhongyuan_record_count)
+                              qieyun_record_count, systems_for_period,
+                              lookup_phono_ml, phono_ml_record_count,
+                              lookup_zhongyuan, zhongyuan_record_count)
 
 
 class TimelineTests(unittest.TestCase):
@@ -97,7 +99,8 @@ class SystemsTests(unittest.TestCase):
         yuan = systems_for_period("early_mandarin", include_metadata_only=False)
         self.assertIn("phono_ml_baxter_sagart_mc", [s.id for s in mc])
         self.assertIn("zhongyuan_yangnaisi", [s.id for s in yuan])
-\n    def test_unintegrated_system_does_not_invent_ipa(self):
+
+    def test_unintegrated_system_does_not_invent_ipa(self):
         r = lookup_reading("天", "baxter_sagart_oc")
         self.assertFalse(r.available)
         self.assertEqual(r.source_status, "not_integrated")
