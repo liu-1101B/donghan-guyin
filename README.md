@@ -117,16 +117,18 @@ build.bat
 
 ## 历史音韵平台基础层（开发中）
 
-新分支 `feat/historical-phonology-foundation` 开始把项目从单一东汉实验字表扩展为“历史时期 × 拟音体系 × 逐字读音”的可追溯架构。
+新分支 `feat/historical-phonology-foundation` 将项目扩展为“历史时期 × 拟音体系 × 逐字读音”的可追溯架构。
 
 - `language/history/timeline.py`：历史时期导航范围与年份查询，允许时期重叠。
-- `language/history/systems.py`：拟音体系注册表，明确区分已适配数据与仅登记元数据。
+- `language/history/systems.py`：拟音体系注册表，区分已接入数据与仅登记元数据。
 - `language/history/reconstruction.py`：统一逐字查询；未接入的数据不会被猜测或伪装成真实读音。
+- `language/history/qieyun_data.py`：离线查询《广韵》反切音韵地位表，保留同字多条记录。
+- `data/historical/guangyun_positions.csv`：随仓库提供的 CC0 数据副本；来源、许可和上游 blob SHA 见 `data/historical/README.md`。
 - `language/history/provenance.py`：记录来源、版本、条目位置、推导规则与置信度。
-- `docs/HISTORICAL_PHONOLOGY_ARCHITECTURE.md`：数据模型与后续接入路线。
-- `tests/test_historical_phonology.py`：基础行为测试。
+- `docs/HISTORICAL_PHONOLOGY_ARCHITECTURE.md`：数据模型、学术边界与后续路线。
+- `tests/test_historical_phonology.py`：覆盖时期、体系、数据查询和缺失读音处理。
 
-**当前状态：架构基础层已开始实现，尚未接入各学者的完整音韵数据，也尚未将时间轴控件接入现有界面。** 注册的学者体系目前只是元数据，不代表已经能查询或播放该体系的逐字读音。东汉旧字表继续标记为实验性方案。
+**当前数据状态：**《广韵》表已接入，可查询小韵首字、反切上下字及原始音韵地位描述。这是中古音韵资料记录，不是 IPA，也不是某位学者的完整拟音方案。高本汉、王力等体系目前仍是元数据登记，尚未导入其完整逐字拟音。东汉旧字表继续标记为实验性方案；时间轴控件尚未接入现有界面。
 
 运行测试：
 
