@@ -25,6 +25,13 @@ SYSTEMS = (
         "适配现有 phonology_db.EASTERN_HAN_DB 的兼容入口。",
         status="implemented_legacy_adapter",
         notes="实验性字条，来源和推导过程仍需逐字补齐。"),
+    ReconstructionSystem("guangyun_qieyun_position",
+        "《廣韻》系音韻地位（原始資料）", "韻書資料／nk2028/tshet-uinh-data",
+        ("middle_chinese",),
+        "可查詢《廣韻》反切音韻地位表中的小韻首字與音韻描述；不是 IPA 擬音。",
+        status="integrated_dataset",
+        source_url="https://github.com/nk2028/tshet-uinh-data",
+        notes="CC0 1.0；本地固定資料副本及來源 blob SHA 見 data/historical/README.md。"),
     ReconstructionSystem("zhengzhang_oc", "上古音构拟（郑张尚芳）", "郑张尚芳",
         ("old_chinese",), "上古汉语参考体系；当前仅登记元数据。",
         source_url="https://zh.wikipedia.org/wiki/郑张尚芳上古音系统",
@@ -63,4 +70,4 @@ def systems_for_period(period_id: str, *, include_metadata_only: bool = True):
     matches = tuple(s for s in SYSTEMS if s.supports_period(period_id))
     if include_metadata_only:
         return matches
-    return tuple(s for s in matches if s.status == "implemented_legacy_adapter")
+    return tuple(s for s in matches if s.status in {"implemented_legacy_adapter", "integrated_dataset"})
