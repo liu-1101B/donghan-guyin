@@ -1,0 +1,18 @@
+name: Historical phonology tests
+
+on:
+  push:
+    branches:
+      - feat/historical-phonology-foundation
+  pull_request:
+
+jobs:
+  test-historical-phonology:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run historical phonology tests
+        run: python -m unittest discover -s tests -p "test_historical_phonology.py" -v
