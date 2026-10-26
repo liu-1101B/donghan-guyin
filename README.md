@@ -115,6 +115,27 @@ build.bat
 
 ---
 
+## 历史音韵平台基础层（开发中）
+
+新分支 `feat/historical-phonology-foundation` 开始把项目从单一东汉实验字表扩展为“历史时期 × 拟音体系 × 逐字读音”的可追溯架构。
+
+- `language/history/timeline.py`：历史时期导航范围与年份查询，允许时期重叠。
+- `language/history/systems.py`：拟音体系注册表，明确区分已适配数据与仅登记元数据。
+- `language/history/reconstruction.py`：统一逐字查询；未接入的数据不会被猜测或伪装成真实读音。
+- `language/history/provenance.py`：记录来源、版本、条目位置、推导规则与置信度。
+- `docs/HISTORICAL_PHONOLOGY_ARCHITECTURE.md`：数据模型与后续接入路线。
+- `tests/test_historical_phonology.py`：基础行为测试。
+
+**当前状态：架构基础层已开始实现，尚未接入各学者的完整音韵数据，也尚未将时间轴控件接入现有界面。** 注册的学者体系目前只是元数据，不代表已经能查询或播放该体系的逐字读音。东汉旧字表继续标记为实验性方案。
+
+运行测试：
+
+```bash
+python -m unittest discover -s tests -p "test_historical_phonology.py"
+```
+
+---
+
 ## 后续扩展计划
 
 - [ ] 更多汉字音韵数据（703 → 2000+）
