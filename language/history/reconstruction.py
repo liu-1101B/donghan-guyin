@@ -22,6 +22,8 @@ class Reading:
     xiaoyun_id: Optional[str] = None
     fanqie_upper: Optional[str] = None
     fanqie_lower: Optional[str] = None
+    transcription: Optional[str] = None
+    transcription_scheme: Optional[str] = None
 
     @property
     def available(self) -> bool:
@@ -31,7 +33,7 @@ class Reading:
     @property
     def has_record(self) -> bool:
         """Whether this result contains a source record, even without IPA."""
-        return bool(self.ipa or self.phonological_position)
+        return bool(self.ipa or self.phonological_position or self.transcription)
 
 
 def lookup_reading(character: str, system_id: str, *, period_id: Optional[str] = None,
@@ -43,6 +45,73 @@ def lookup_reading(character: str, system_id: str, *, period_id: Optional[str] =
     selected_period = period_id or system.period_ids[0]
     if not system.supports_period(selected_period):
         raise ValueError(f"system {system_id!r} does not support period {selected_period!r}")
+
+    if system_id == "phono_ml_baxter_sagart_mc":
+        from .phono_ml_data import lookup_phono_ml, SOURCE_URL, SOURCE_BLOB_SHA
+        records = lookup_phono_ml(character)
+        if not records:
+            return Reading(character, system_id, selected_period, None,
+                source_status="missing_character",
+                note="PHONO-ML 数据集中无此字条。")
+        first = records[0]
+        note = "PHONO-ML 的 Baxter–Sagart 风格中古音转写；不是 IPA 录音，也不保证可直接送入 TTS。"
+        if len(records) > 1:
+            note += f" 此字有 {len(records)} 条转写记录；请用 lookup_phono_ml() 查看全部。"
+        return Reading(
+            character, system_id, selected_period, None,
+            source_status="source_reconstruction",
+            provenance=Provenance(
+                source_title="PHONO-ML Database",
+                source_author="Guillaume Jacques / Alexander Delaporte",
+                source_url=SOURCE_URL,
+                source_version=f"Git blob {SOURCE_BLOB_SHA}",
+                page_or_entry=first.identifiers or None,
+                derivation_rule="Baxter (1992) principles and Jacques (2021); automated derivation",
+                confidence="medium",
+                evidence_note="上游说明其对相当一部分字条进行了抽样核验，并提示自动生成数据仍可能有误。",
+            ),
+            note=note,
+            phonological_position=first.phonological_position or None,
+            fanqie_upper=(first.fanqie[0] if first.fanqie else None),
+            fanqie_lower=(first.fanqie[1] if len(first.fanqie) > 1 else None),
+            transcription=first.transcription or None,
+            transcription_scheme=first.transcription_scheme,
+        )
+
+    if system_id.startswith("zhongyuan_"):
+        from .zhongyuan_data import lookup_zhongyuan, SOURCE_URL, SOURCE_BLOB_SHA
+        records = lookup_zhongyuan(character, system_id)
+        if not records:
+            return Reading(character, system_id, selected_period, None,
+                source_status="missing_character",
+                note="《中原音韵》数据集中无此字的对应方案记录。")
+        first = records[0]
+        value = next((value for sid, value in first.transcriptions if sid == system_id), None)
+        if not value:
+            return Reading(character, system_id, selected_period, None,
+                source_status="missing_reconstruction",
+                note="该字有《中原音韵》条目，但没有此学者方案的转写。")
+        system = get_system(system_id)
+        return Reading(
+            character, system_id, selected_period, None,
+            source_status="source_reconstruction",
+            provenance=Provenance(
+                source_title="中原音韵数据集",
+                source_author="nk2028/zhongyuan-data contributors; scholarly reconstructions as attributed in upstream README",
+                source_url=SOURCE_URL,
+                source_version=f"Git blob {SOURCE_BLOB_SHA}",
+                page_or_entry=f"小韵 {first.xiaoyun}; {system.scholar} column",
+                derivation_rule=system.name,
+                confidence="medium",
+                evidence_note="保留上游学者方案的原始转写；此字段不表示项目已验证其可直接语音合成。",
+            ),
+            note=f"《中原音韵》{system.name}。原始转写已接入；尚未声明为可直接 TTS 合成。",
+            initial=first.initial or None,
+            final=first.final or None,
+            tone=first.tone or None,
+            transcription=value,
+            transcription_scheme=system.name,
+        )
 
     if system_id == "guangyun_qieyun_position":
         from .qieyun_data import lookup_qieyun_positions, SOURCE_URL, SOURCE_BLOB_SHA
