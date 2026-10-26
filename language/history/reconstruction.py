@@ -18,10 +18,20 @@ class Reading:
     approximation: bool = False
     provenance: Provenance = Provenance()
     note: str = ""
+    phonological_position: Optional[str] = None
+    xiaoyun_id: Optional[str] = None
+    fanqie_upper: Optional[str] = None
+    fanqie_lower: Optional[str] = None
 
     @property
     def available(self) -> bool:
+        """Whether an IPA value exists and could be sent to a phoneme backend."""
         return bool(self.ipa)
+
+    @property
+    def has_record(self) -> bool:
+        """Whether this result contains a source record, even without IPA."""
+        return bool(self.ipa or self.phonological_position)
 
 
 def lookup_reading(character: str, system_id: str, *, period_id: Optional[str] = None,
@@ -33,6 +43,38 @@ def lookup_reading(character: str, system_id: str, *, period_id: Optional[str] =
     selected_period = period_id or system.period_ids[0]
     if not system.supports_period(selected_period):
         raise ValueError(f"system {system_id!r} does not support period {selected_period!r}")
+
+    if system_id == "guangyun_qieyun_position":
+        from .qieyun_data import lookup_qieyun_positions, SOURCE_URL, SOURCE_BLOB_SHA
+        records = lookup_qieyun_positions(character)
+        if not records:
+            return Reading(character, system_id, selected_period, None,
+                source_status="missing_character",
+                note="《廣韻》反切音韻地位表中无此小韻首字记录。")
+        first = records[0]
+        note = "原始音韻地位資料，不是 IPA 或可直接合成的讀音。"
+        if len(records) > 1:
+            note += f" 此字有 {len(records)} 条小韻记录；请用 lookup_qieyun_positions() 查看全部。"
+        if first.has_multiple_descriptions:
+            note += " 原始字段含多个音韻描述，均予保留。"
+        return Reading(
+            character, system_id, selected_period, None,
+            source_status="source_record",
+            provenance=Provenance(
+                source_title="《廣韻》反切音韻地位表",
+                source_author="nk2028/tshet-uinh-data contributors",
+                source_url=SOURCE_URL,
+                source_version=f"Git blob {SOURCE_BLOB_SHA}",
+                page_or_entry=f"小韻号 {first.xiaoyun_id}",
+                confidence="unassessed",
+                evidence_note="资料行的音韻地位描述照原样保存；本项目尚未将其转写为学者拟音。",
+            ),
+            note=note,
+            phonological_position=first.position_description or None,
+            xiaoyun_id=first.xiaoyun_id or None,
+            fanqie_upper=first.fanqie_upper or None,
+            fanqie_lower=first.fanqie_lower or None,
+        )
 
     if system_id != "han_eastern_experimental":
         return Reading(character, system_id, selected_period, None,
