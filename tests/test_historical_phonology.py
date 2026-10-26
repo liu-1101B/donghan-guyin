@@ -1,7 +1,8 @@
 """Tests for historical timeline and reconstruction metadata."""
 import unittest
 from language.history import (TIMELINE, get_period, get_system, lookup_reading,
-                              period_at, systems_for_period)
+                              lookup_qieyun_positions, period_at,
+                              qieyun_record_count, systems_for_period)
 
 
 class TimelineTests(unittest.TestCase):
@@ -33,6 +34,28 @@ class SystemsTests(unittest.TestCase):
     def test_integrated_system_filter(self):
         got = systems_for_period("eastern_han", include_metadata_only=False)
         self.assertEqual([s.id for s in got], ["han_eastern_experimental"])
+
+
+    def test_guangyun_dataset_is_bundled_and_queryable(self):
+        self.assertGreater(qieyun_record_count(), 3000)
+        records = lookup_qieyun_positions("東")
+        self.assertTrue(records)
+        self.assertEqual(records[0].xiaoyun_id, "1")
+        self.assertEqual(records[0].position_description, "端一東平")
+
+    def test_guangyun_source_record_is_not_mislabeled_as_ipa(self):
+        reading = lookup_reading("東", "guangyun_qieyun_position")
+        self.assertTrue(reading.has_record)
+        self.assertFalse(reading.available)
+        self.assertEqual(reading.source_status, "source_record")
+        self.assertEqual(reading.phonological_position, "端一東平")
+        self.assertEqual(reading.provenance.confidence, "unassessed")
+        self.assertIn("93ca1b1551b30bba9c76fe21078f156b8299d9cc",
+                      reading.provenance.source_version)
+
+    def test_integrated_dataset_is_available_in_middle_chinese_filter(self):
+        systems = systems_for_period("middle_chinese", include_metadata_only=False)
+        self.assertIn("guangyun_qieyun_position", [s.id for s in systems])
 
     def test_unintegrated_system_does_not_invent_ipa(self):
         r = lookup_reading("天", "baxter_sagart_oc")
