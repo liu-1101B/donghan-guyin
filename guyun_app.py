@@ -318,3 +318,110 @@ with col2:
                     col = cols[i % 3]
                     with col:
                         st.markdown(f'<div class="feature-card"><strong>{tag}</strong><br><span style="color:#7a6a5a;font-size:0.75rem">{info["desc"]}</span><br><span style="font-size:0.8rem;color:#d4c4a8">{", ".join(info["chars"])}</span></div>', unsafe_allow_html=True)
+
+
+# ===== 历史音系探索（独立研究视图，不改变原有东汉合成流程）=====
+with st.expander("🧭 历史音系探索（研究预览）", expanded=False):
+    from language.history import (
+        get_period, systems_for_period, lookup_reading,
+        lookup_qieyun_positions, lookup_phono_ml, lookup_zhongyuan,
+    )
+
+    st.markdown(
+        "按历史时期与学者方案查询已接入的离线数据。这里显示的是韵书记录、"
+        "音韵地位或学者转写；**不等于真实录音，也不保证可以直接送入 TTS**。"
+    )
+    period_labels = {
+        "上古汉语 / 东汉实验区": "old_chinese",
+        "中古汉语 / 《广韵》系": "middle_chinese",
+        "元明时期 / 《中原音韵》": "early_mandarin",
+    }
+    selected_period_label = st.selectbox(
+        "历史时期", list(period_labels.keys()), key="historical_explorer_period"
+    )
+    selected_period = period_labels[selected_period_label]
+    systems = systems_for_period(selected_period, include_metadata_only=False)
+    if not systems:
+        st.info("该时期暂无可查询的已接入数据。")
+    else:
+        selected_system_id = st.selectbox(
+            "数据 / 拟音方案",
+            [s.id for s in systems],
+            format_func=lambda sid: next(
+                f"{s.name} · {s.scholar}" for s in systems if s.id == sid
+            ),
+            key="historical_explorer_system",
+        )
+        query_char = st.text_input(
+            "查询单个汉字", value="東", max_chars=1,
+            key="historical_explorer_character",
+        ).strip()
+        if st.button("查询历史音系", key="historical_explorer_lookup"):
+            if not query_char:
+                st.warning("请先输入一个汉字。")
+            else:
+                rows = []
+                source_url = ""
+                if selected_system_id == "guangyun_qieyun_position":
+                    from language.history.qieyun_data import SOURCE_URL
+                    source_url = SOURCE_URL
+                    for rec in lookup_qieyun_positions(query_char):
+                        rows.append({
+                            "汉字": rec.head_character,
+                            "小韵号": rec.xiaoyun_id,
+                            "反切上字": rec.fanqie_upper,
+                            "反切下字": rec.fanqie_lower,
+                            "音韵地位（原始描述）": rec.position_description,
+                            "数据类型": "韵书音韵地位，不是 IPA",
+                        })
+                elif selected_system_id == "phono_ml_baxter_sagart_mc":
+                    from language.history.phono_ml_data import SOURCE_URL
+                    source_url = SOURCE_URL
+                    for rec in lookup_phono_ml(query_char):
+                        rows.append({
+                            "汉字": rec.character,
+                            "转写方案": rec.transcription_scheme,
+                            "转写": rec.transcription,
+                            "反切": rec.fanqie,
+                            "音韵地位": rec.phonological_position,
+                            "源条目标识": rec.identifiers,
+                            "数据类型": "Baxter–Sagart 风格转写；非 IPA 音频",
+                        })
+                elif selected_system_id.startswith("zhongyuan_"):
+                    from language.history.zhongyuan_data import SOURCE_URL
+                    source_url = SOURCE_URL
+                    for rec in lookup_zhongyuan(query_char, selected_system_id):
+                        value = dict(rec.transcriptions).get(selected_system_id, "")
+                        rows.append({
+                            "汉字": rec.character,
+                            "小韵": rec.xiaoyun,
+                            "声母": rec.initial,
+                            "韵母": rec.final,
+                            "声调": rec.tone,
+                            "学者方案": selected_system_id,
+                            "转写 / 拟音": value,
+                            "数据类型": "《中原音韵》学者方案转写",
+                        })
+                else:
+                    reading = lookup_reading(query_char, selected_system_id)
+                    source_url = reading.provenance.source_url or ""
+                    rows.append({
+                        "汉字": reading.character,
+                        "体系": reading.system_id,
+                        "记录状态": reading.source_status,
+                        "IPA 字段": reading.ipa or "—",
+                        "音韵地位": reading.phonological_position or "—",
+                        "转写": reading.transcription or "—",
+                        "说明": reading.note,
+                    })
+
+                if rows:
+                    st.dataframe(rows, use_container_width=True, hide_index=True)
+                    if source_url:
+                        st.markdown(f"数据来源：[查看上游记录 / 数据集]({source_url})")
+                    st.caption(
+                        "多音字会显示该数据集可查到的多条记录。不同学者方案是不同模型，"
+                        "请勿把它们拼接为一个未经说明的“标准古音”。"
+                    )
+                else:
+                    st.info("该字在所选数据集中没有查到记录。")
