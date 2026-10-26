@@ -76,7 +76,7 @@ streamlit run guyun_app.py
 
 ---
 
-## 研究边界与证据说明
+## 历史音系研究模块\n\n已新增历史时期时间轴、学者体系注册、来源追溯与离线数据查询。当前接入《广韵》音韵地位原始资料、PHONO-ML Baxter–Sagart 风格中古音转写，以及《中原音韵》多个学者方案。查询入口与数据许可说明见 [历史音韵架构](docs/HISTORICAL_PHONOLOGY_ARCHITECTURE.md)、[数据资源总表](docs/HISTORICAL_PHONOLOGY_DATA_CATALOG.md) 和 [数据来源/许可](data/historical/README.md)。这些历史转写默认不被当作 TTS 可直接使用的 IPA。\n\n## 研究边界与证据说明
 
 本项目是面向演示、探索与教学的实验性原型，**不声称已经完成经过同行评审的“东汉洛阳官音”定论式复原**。
 
