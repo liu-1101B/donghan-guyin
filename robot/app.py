@@ -96,10 +96,55 @@ from robot.voice_router import VoiceRouter
 from robot.audio_io import AudioIO, bt_status, BT_MAC
 from services import tts_client
 from language.ancient_tts import text_to_ipa, synthesize_ancient
+from language.turn_engine import make_turn
 from phonology_db import lookup_char, EASTERN_HAN_DB
 
 OUT_DIR = os.path.join(ROOT, "audio_out")
 os.makedirs(OUT_DIR, exist_ok=True)
+
+
+# ---------- 后台生成（线程内不碰 Streamlit API，状态写 job 字典） ----------
+def _gen_worker(job, session, cfg):
+    """后台线程：LLM 生成 + TTS 合成 + 自动朗读，结果只写进 job。
+
+    线程内不碰 st.session_state / st.*（避免跨线程上下文问题），
+    所有状态落盘由主线程的轮询 fragment 在 result 就绪时统一完成。
+    """
+    try:
+        job["phase"] = "qwen"
+        turn = make_turn(cfg["text"], mode=cfg["mode"],
+                         history=session.history(),
+                         pitch=cfg["pitch"], voice=cfg["voice"],
+                         rate=cfg["rate"], speed=cfg["speed"])
+        if turn.error:
+            job["result"] = ("error", f"生成失败：{turn.error}")
+            return
+        job["result"] = ("ok", {
+            "translation": turn.translation,
+            "reply": turn.reply,
+            "reply_modern": turn.reply_modern,
+            "source": turn.source,
+            "mode": turn.mode,
+            "audio": turn.audio,
+            "audio_kind": turn.audio_kind,
+            "coverage": turn.coverage_pct,
+            "approx": turn.approx_chars,
+            "user": cfg["text"],
+            "ms": time.time(),
+        })
+        if not turn.audio:
+            return
+        # 自动朗读（sink 检查 + 0.3s 探测；异常时 bt_reset.sh 兜底）
+        job["phase"] = "play"
+        try:
+            ai = get_audio_io()
+            job["play_ok"] = _ensure_playable(ai, spinner=False)
+            if job["play_ok"]:
+                ai.play_async(turn.audio)
+        except Exception:
+            job["play_ok"] = False
+    except Exception as e:
+        job["result"] = ("error", str(e))
 
 
 # ---------- 全局组件（跨 rerun 持久） ----------
@@ -257,6 +302,9 @@ st.markdown("""
     .gi-gap { height:1.1rem; }
 
     .gi-meta { font-size:0.78rem; color:var(--ink3); letter-spacing:0.1em; margin-bottom:0.6rem; }
+    .gi-status { display:flex; align-items:center; gap:0.6rem; font-size:0.95rem; color:var(--ink2); padding:0.9rem 0.4rem 0.3rem; }
+    .gi-status::before { content:""; width:0.9rem; height:0.9rem; border:2px solid var(--line); border-top-color:var(--ink); border-radius:50%; animation:gi-spin 0.9s linear infinite; flex:none; }
+    @keyframes gi-spin { to { transform:rotate(360deg); } }
     .gi-classical { font-family:'Noto Serif SC',serif; font-size:1.42rem; line-height:2.05; color:var(--ink); letter-spacing:0.05em; padding:0.1rem 0 0.1rem 1.1rem; border-left:2px solid #d8cfbc; margin:0.4rem 0; }
     .gi-classical.gi-small { font-size:1.1rem; }
     .gi-muteline { color:var(--ink2); font-size:0.92rem; line-height:1.9; margin:0.2rem 0; }
@@ -308,8 +356,9 @@ st.markdown("""
     .stRadio [role="radiogroup"] input[type="radio"] { position:absolute; opacity:0; pointer-events:none; }
     .stRadio [role="radiogroup"] [data-testid="stRadioLabel"] {
         width:100%; text-align:center; font-weight:500; color:var(--ink2); letter-spacing:0.12em; }
-    .stRadio [role="radiogroup"] label:has(input:checked) { border-color:var(--ink); background:var(--ink); }
-    .stRadio [role="radiogroup"] label:has(input:checked) [data-testid="stRadioLabel"] { color:var(--paper) !important; }
+    .stRadio [role="radiogroup"] label:has(input:checked) {
+        border-color:var(--ink); background:var(--ink); color:var(--paper) !important; }
+    .stRadio [role="radiogroup"] label:has(input:checked) * { color:var(--paper) !important; }
 
     /* 滑杆 */
     .stSlider [data-baseweb="slider"] input { background:var(--ink2) !important; }
@@ -394,61 +443,40 @@ with col1:
             st.caption("语速与基频仅东汉古音模式生效。")
 
     def _generate():
+        """登记后台任务并立即返回（LLM+TTS 在后台线程跑，
+        轮询 fragment 跟进进度）→ 生成期间整页不再变暗、控件可用"""
         text = (st.session_state.get("robot_input") or "").strip()
         if not text:
             st.session_state.gen_error = "请输入文本（或录音）"
             return
         ss = st.session_state
-        # 应用界面上的设置
-        router.set_mode("natural" if ss["robot_mode"] == "自然语音" else "ancient")
+        # 防连点：上一次生成未完成则忽略
+        _prev = ss.get("gen_job")
+        if _prev is not None and _prev.get("result") is None:
+            return
         # 设置控件按当前模式渲染，另一模式的 key 可能未创建 → 用 .get 兜底
         name_to_id = {v[0]: v[1] for v in voices}
-        router.voice = name_to_id.get(ss.get("robot_voice"), voice_ids[0])
-        router.rate = f"{int(ss.get('robot_rate', -10)):+d}%"
-        router.speed = float(ss.get("robot_speed", 1.0))
-        router.pitch = int(ss.get("robot_pitch", router.pitch))
-        ss.gen_error = None
-        try:
-            turn = router.route(text, history=session.history())
-        except Exception as e:
-            ss.gen_error = str(e)
-            return
-        if turn.error:
-            ss.gen_error = f"生成失败：{turn.error}"
-            return
-        session.add(text, turn.reply)
-        ss.last_result = {
-            "translation": turn.translation,
-            "reply": turn.reply,
-            "reply_modern": turn.reply_modern,
-            "source": turn.source,
-            "mode": turn.mode,
-            "audio": turn.audio,
-            "audio_kind": turn.audio_kind,
-            "coverage": turn.coverage_pct,
-            "approx": turn.approx_chars,
-            "user": text,
-            "ms": time.time(),
+        mode = "natural" if ss["robot_mode"] == "自然语音" else "ancient"
+        cfg = {
+            "text": text,
+            "mode": mode,
+            "mode_label": "自然语音" if mode == "natural" else "东汉古音",
+            "voice": name_to_id.get(ss.get("robot_voice"), voice_ids[0]),
+            "rate": f"{int(ss.get('robot_rate', -10)):+d}%",
+            "speed": float(ss.get("robot_speed", 1.0)),
+            "pitch": int(ss.get("robot_pitch", router.pitch)),
         }
-        ss.turns.append(
-            (text, turn.reply,
-             "自然语音" if turn.mode == "natural" else "东汉古音"))
-        ss.turns = ss.turns[-session.max_turns:]
+        # 同步 router（供扩展朗读按钮复用当前设置）
+        router.set_mode(mode)
+        router.voice, router.rate = cfg["voice"], cfg["rate"]
+        router.speed, router.pitch = cfg["speed"], cfg["pitch"]
+        ss.gen_error = None
         ss.robot_input = ""
-        # 自动朗读：合成完成即发到默认输出设备（约 2.5s 通道检查）
-        if turn.audio:
-            try:
-                ai = get_audio_io()
-                ok = _ensure_playable(ai, spinner=False)
-                if ok:
-                    ai.play_async(turn.audio)
-                    ss.play_note = "已朗读到默认输出设备"
-                    st.toast("已生成，正在朗读")
-                else:
-                    ss.play_note = "已生成（自动朗读失败，可点「设备播放」重试）"
-                    st.toast("已生成（朗读通道异常）", icon="⚠️")
-            except Exception:
-                ss.play_note = "已生成（自动朗读失败，可点「设备播放」重试）"
+        job = {"phase": "start", "result": None, "play_ok": None}
+        ss.gen_job = job
+        threading.Thread(target=_gen_worker,
+                         args=(job, session, cfg),
+                         daemon=True).start()
 
     st.markdown('<div class="gi-gap"></div>', unsafe_allow_html=True)
     st.button("生成并朗读", type="primary", use_container_width=True,
@@ -467,6 +495,33 @@ with col2:
     if st.session_state.get("gen_error"):
         st.error(st.session_state.gen_error)
         st.session_state.gen_error = None
+
+    # 后台生成状态区（独立 fragment 轮询，只刷新这一小块）
+    @st.fragment(run_every=1)
+    def _gen_status():
+        job = st.session_state.get("gen_job")
+        if not job or job["result"] is None:
+            if job:
+                st.markdown(f'<div class="gi-status">{job["phase"]}</div>',
+                            unsafe_allow_html=True)
+            return
+        kind, payload = job["result"]
+        ss = st.session_state
+        ss.gen_job = None
+        if kind == "error":
+            ss.gen_error = payload
+            return
+        session.add(payload["user"], payload["reply"])   # LLM 上下文
+        ss.last_result = payload
+        ss.turns.append((payload["user"], payload["reply"],
+                         "自然语音" if payload["mode"] == "natural" else "东汉古音"))
+        ss.turns = ss.turns[-session.max_turns:]
+        if payload["audio"]:
+            ss.play_note = ("已朗读到默认输出设备" if job.get("play_ok")
+                            else "已生成（自动朗读失败，可点「设备播放」重试）")
+        st.rerun(scope="app")
+
+    _gen_status()
 
     res = st.session_state.last_result
     if not res:

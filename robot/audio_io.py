@@ -40,8 +40,12 @@ class AudioIO:
         self.capture_device = capture_device
         self.playback_device = playback_device
         self.sample_rate = sample_rate
-        self._play_proc = None
-        self._play_tmp = None
+        # 播放进程改为**每次播放独立**（存进 _Playback 句柄，不再是
+        # 实例共享属性）：旧实现里 play_async 开多个线程共享
+        # self._play_proc/self._play_tmp，后一次播放的 stop() 会误杀
+        # 前一次的 pw-play、被杀的线程还会落回 aplay 乱播
+        # （症状：听完一段就听不了另一段）。
+        self._last_playback = None
 
     # ---------- 录制 ----------
     def record(self, seconds: float, out_path: str) -> bool:
@@ -80,16 +84,20 @@ class AudioIO:
         界面按钮请用 play_async()，避免 UI 卡到播完。
         """
         self.stop()
-        return self._play_blocking(wav_bytes)
+        pb = _Playback(wav_bytes, self.playback_device)
+        self._last_playback = pb
+        return pb.wait()
 
     def play_async(self, wav_bytes: bytes) -> bool:
-        """后台播放（立即返回 True，音频在后台播完；可被 stop() 打断）。
+        """后台播放（立即返回，音频在后台播完；可被 stop() 打断）。
 
         任何音频格式（mp3/wav 自动解码）。
+        每次播放独立（不干扰彼此）：想同时放两段可以连点，
+        想打断当前播放调 stop()。
         """
-        self.stop()
-        t = threading.Thread(target=self._play_blocking,
-                             args=(wav_bytes,), daemon=True)
+        pb = _Playback(wav_bytes, self.playback_device)
+        self._last_playback = pb
+        t = threading.Thread(target=pb.run, daemon=True)
         t.start()
         return True
 
@@ -133,46 +141,6 @@ class AudioIO:
                 except OSError:
                     pass
 
-    def _play_blocking(self, wav_bytes: bytes) -> bool:
-        """实际播放（阻塞）。调用方负责先 stop()。"""
-        wav_bytes = self._to_wav_bytes(wav_bytes)
-        # 1) pw-play（写临时文件）
-        tmp = None
-        try:
-            tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-            tmp.write(wav_bytes)
-            tmp.close()
-            self._play_tmp = tmp.name
-            self._play_proc = subprocess.Popen(["pw-play", tmp.name])
-            self._play_proc.wait()
-            if self._play_proc.returncode == 0:
-                return True
-            print(f"[audio] pw-play 返回 {self._play_proc.returncode}，尝试 aplay")
-        except FileNotFoundError:
-            pass
-        except Exception as e:
-            print(f"[audio] pw-play 失败: {e}")
-        finally:
-            if tmp and os.path.exists(tmp.name):
-                try:
-                    os.unlink(tmp.name)
-                except OSError:
-                    pass
-            self._play_tmp = None
-        # 2) aplay 直连回退
-        try:
-            self._play_proc = subprocess.Popen(
-                ["aplay", "-q", "-D", self.playback_device, "-"],
-                stdin=subprocess.PIPE,
-            )
-            self._play_proc.stdin.write(wav_bytes)
-            self._play_proc.stdin.close()
-            self._play_proc.wait()
-            return self._play_proc.returncode == 0
-        except Exception as e:
-            print(f"[audio] aplay 失败: {e}")
-            return False
-
     def play_mp3(self, mp3_bytes: bytes) -> bool:
         """播放 MP3 字节串（先解码为 WAV 再播）"""
         return self.play_wav(self._to_wav_bytes(mp3_bytes))
@@ -187,13 +155,91 @@ class AudioIO:
         return self.play_wav(data)
 
     def stop(self):
-        """打断当前播放"""
-        if self._play_proc and self._play_proc.poll() is None:
-            self._play_proc.kill()
+        """打断最近一次播放"""
+        pb = self._last_playback
+        if pb:
+            pb.cancel()
+
+
+class _Playback:
+    """一次独立播放（线程安全）：pw-play 优先，失败回退 aplay。
+
+    每个实例持有自己的子进程和临时文件，互不干扰；
+    cancel() 只影响自己。
+    """
+
+    def __init__(self, wav_bytes: bytes, playback_device: str):
+        self.wav_bytes = wav_bytes
+        self.playback_device = playback_device
+        self._proc = None
+
+    def run(self) -> bool:
+        """实际播放（阻塞直到播完/被打断）。"""
+        wav = self._wav()
+        # 1) pw-play（临时文件，本实例独占）
+        tmp = None
+        try:
+            tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+            tmp.write(wav)
+            tmp.close()
+            self._proc = subprocess.Popen(["pw-play", tmp.name])
+            self._proc.wait()
+            if self._proc.returncode == 0:
+                return True
+            print(f"[audio] pw-play 返回 {self._proc.returncode}，尝试 aplay")
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            print(f"[audio] pw-play 失败: {e}")
+        finally:
+            if tmp and os.path.exists(tmp.name):
+                try:
+                    os.unlink(tmp.name)
+                except OSError:
+                    pass
+            self._proc = None
+        # 2) aplay 直连回退
+        try:
+            p = subprocess.Popen(
+                ["aplay", "-q", "-D", self.playback_device, "-"],
+                stdin=subprocess.PIPE,
+            )
+            self._proc = p
+            p.stdin.write(wav)
+            p.stdin.close()
+            p.wait()
+            return p.returncode == 0
+        except Exception as e:
+            print(f"[audio] aplay 失败: {e}")
+            return False
+        finally:
+            self._proc = None
+
+    def wait(self) -> bool:
+        """阻塞播放（play_wav 用）。"""
+        return self.run()
+
+    def cancel(self):
+        """打断本次播放（stop() 用）。"""
+        p = self._proc
+        if p and p.poll() is None:
+            p.kill()
             try:
-                self._play_proc.wait(timeout=2)
+                p.wait(timeout=2)
             except Exception:
                 pass
+
+    def _wav(self) -> bytes:
+        if self.wav_bytes[:4] == b"RIFF":
+            return self.wav_bytes
+        if MINIAUDIO_AVAILABLE:
+            try:
+                d = miniaudio.decode(self.wav_bytes)
+                return _pcm_to_wav(bytes(d.samples), d.sample_rate,
+                                   d.nchannels)
+            except Exception as e:
+                print(f"[audio] miniaudio 解码失败: {e}")
+        return self.wav_bytes
 
 
 # ---------- 蓝牙播放通道检查 ----------
