@@ -17,6 +17,8 @@
 - language/history/timeline.py：时期模型、年份查询、重叠时期处理。
 - language/history/systems.py：拟音体系注册表，区分旧字表适配与仅登记元数据。
 - language/history/reconstruction.py：统一逐字查询；未接入体系明确返回不可用，不猜测 IPA。
+- language/history/qieyun_data.py：查询随仓库提供的《广韵》反切音韵地位表，保留同字多条小韵记录。
+- data/historical/guangyun_positions.csv：来自 nk2028/tshet-uinh-data 的 CC0 1.0 数据副本；许可与上游内容 blob SHA 记录在 data/historical/README.md。
 - language/history/provenance.py：来源、版本、页码/条目、推导规则、置信度等证据字段。
 - tests/test_historical_phonology.py：覆盖时期、体系、缺失读音与旧数据库适配器。
 
@@ -30,14 +32,20 @@
 
 ## 体系注册表的学术边界
 
-首批登记郑张尚芳、白一平—沙加尔等上古音参考体系，以及高本汉、王力、郑张尚芳等中古音参考体系。当前它们只是可发现的体系元数据，并未导入完整字表；查询这些体系会返回 not_integrated，不会合成虚构读音。
+首批登记郑张尚芳、白一平—沙加尔等上古音参考体系，以及高本汉、王力、郑张尚芳等中古音参考体系。除下述原始资料入口外，这些学者体系目前仍只是元数据，尚未导入完整拟音表；查询时返回 not_integrated，不会合成虚构读音。
+
+### 第一套已接入数据：广韵反切音韵地位表
+
+本分支将 nk2028/tshet-uinh-data 的 `反切音韻地位/廣韻反切音韻地位表.csv` 固定副本放在 `data/historical/guangyun_positions.csv`。上游仓库标注 CC0 1.0，来源文件的 Git blob SHA 为 `93ca1b1551b30bba9c76fe21078f156b8299d9cc`。详情见 `data/historical/README.md`。
+
+该表提供小韵首字、反切上下字及音韵地位描述。它是可追溯的中古音韵资料，不是 IPA、不是单一学者的拟音，也不应被直接送入 TTS。接口 `lookup_qieyun_positions(character)` 会保留同一字对应的所有小韵记录；通用 `lookup_reading(character, "guangyun_qieyun_position")` 返回首条记录并在备注中提示多条记录。结果使用 `source_status="source_record"`，并通过 `has_record` 与 `available` 区分“存在资料记录”和“有可合成 IPA”。
 
 东汉旧字表继续以 han_eastern_experimental 暴露，但结果标记为 legacy_experimental，来源置信度为 unassessed。下一步需逐条核验来源、著作版本、推导链和争议。
 
 ## 下一步实施顺序
 
 1. 盘点 phonology_db.py，为条目补来源/版本/推导规则，同时保留旧字段兼容。
-2. 选定有明确许可与可复现版本的公开数据，先完成单一体系导入器与覆盖率报告。
+2. 已完成第一套 CC0《广韵》音韵地位资料接入；下一步选定具体学者拟音方案及其版本，接入推导规则或可核验的逐字拟音表，并生成覆盖率报告。
 3. 为多音字增加词级上下文选择，不以单字查表代替词汇读音。
 4. 为音素到 TTS 的映射建立能力矩阵；拟音可信度与合成器能力分别报告。
 5. 最后把时间轴和体系选择接入 Streamlit UI；UI 不应先于数据契约。
