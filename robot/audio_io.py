@@ -10,6 +10,7 @@ robot/audio_io.py
 """
 import io
 import os
+import re
 import subprocess
 import tempfile
 import threading
@@ -33,12 +34,48 @@ def _pcm_to_wav(pcm: bytes, sample_rate: int, nchannels: int) -> bytes:
     return buf.getvalue()
 
 
+def _list_plughw(kind: str):
+    """返回 [(card, device, name)]。kind='capture' 用 arecord -l，
+    'playback' 用 aplay -l。ALSA 卡号每次重启/重插都会漂移，
+    所以设备要按名字找，不能写死 plughw:C,D。"""
+    tool = "arecord" if kind == "capture" else "aplay"
+    out = subprocess.run([tool, "-l"], capture_output=True,
+                         text=True).stdout
+    res = []
+    # arecord/aplay -l 每行形如：
+    #   card 0: Device [USB Audio Device], device 0: USB Audio [USB Audio]
+    # card 与 device 通常在同一行；APE 等内接口每设备一行、card 重复。
+    for line in out.splitlines():
+        m = re.search(r"card (\d+):[^,]*,\s*device (\d+):\s*(.+)", line)
+        if not m:
+            continue
+        name = re.sub(r"\s*\[.*\]\s*$", "", m.group(3)).strip()
+        res.append((int(m.group(1)), int(m.group(2)), name))
+    return res
+
+
+def _resolve_device(configured: str, kind: str) -> str:
+    """把配置里的设备解析成 plughw:C,D。
+    - 显式 'plughw:'/'hw:'/'plug:' 前缀 → 原样返回。
+    - 否则当作设备名（子串，忽略大小写）→ 按名字找当前卡号。
+    """
+    if configured.startswith(("plughw:", "hw:", "plug:")):
+        return configured
+    for card, dev, name in _list_plughw(kind):
+        if configured.lower() in name.lower():
+            return f"plughw:{card},{dev}"
+    return configured  # 找不到就原样，让 arecord 报错兜底
+
+
 class AudioIO:
     def __init__(self, capture_device="plughw:2,0",
                  playback_device="plughw:2,0",
                  sample_rate=16000):
-        self.capture_device = capture_device
-        self.playback_device = playback_device
+        # 设备按名字解析成当前卡号：USB 声卡的 ALSA 卡号每次重启
+        # 都会漂移（曾 card 2 → 重启后 card 0，录音随即失效）。
+        # 配置里给 plughw:/hw:/plug: 前缀时仍按原样用（显式指定）。
+        self.capture_device = _resolve_device(capture_device, "capture")
+        self.playback_device = _resolve_device(playback_device, "playback")
         self.sample_rate = sample_rate
         # 播放进程改为**每次播放独立**（存进 _Playback 句柄，不再是
         # 实例共享属性）：旧实现里 play_async 开多个线程共享
