@@ -70,6 +70,48 @@
 | 持续静音流"保活"（pw-play 喂 16kHz 静音） | **失败**：音箱 ~1.5min 后主动断开 A2DP，加速故障。已撤销 |
 | WirePlumber 规则禁用蓝牙输出节点自动挂起<br>`/etc/xdg/wireplumber/wireplumber.conf`：<br>`{ matches=[{node.name="bluez_output.*"}], actions.update-props={"session.suspend-timeout-seconds"=0} }` + `systemctl --user restart wireplumber` | 15s/90s 空闲浸泡测试通过（sink 在、是默认、probe 通），**但用户 ~6 分钟后仍报无声** → 不足以根治，说明断流不完全来自本机挂起策略 |
 
+## 5b. 2026-10-26 取证进展（重要新证据）
+
+**设备身份确认**：`bluetoothctl info` 显示
+`Icon: audio-headphones`、`Modalias: bluetooth:v004Cp2027d215C`
+——这是**头戴耳机**（v004C 是 Apple 厂商号，兼容 AirPods 协议类设备）。
+此类设备空闲主动休眠/断开 A2DP 是正常设计行为。
+
+**昨晚全部断开事件已逐条归因**（`journalctl -u bluetooth`）：
+
+| 时间 (10-25) | 事件 | 归因 |
+|---|---|---|
+| 15:46 / 15:58 | a2dp-sink disconnecting + `dev_disconnected reason 2` (Remote) | **bt_reset.sh 人为操作** |
+| 16:39:42 | 静音保活流启动（A2DP ACTIVE Playing=1） | 实验开始 |
+| **16:40:56** | **链路直断 `reason 3` (Supervision Timeout)**，AVDTP `connection_lost`，A2DP 1 分钟内死 | **保活静音流害的**——设备收到持续异常静音流后断链 |
+| 16:54 / 16:59 / 17:07 | reason 2 | **bt_reset.sh 人为操作** |
+| 17:30 | reason 2 | 收尾断开 |
+
+**关键结论**：
+1. 日志里**没有**任何"空闲中设备自己悄悄断 A2DP profile"的记录
+   ——昨晚的"无声"实际来自两个已定位机制：
+   - **WirePlumber 自动挂起 → 通道卡死**（15:44、17:06 两次，
+     profile 全程 connected，`pw-play` 卡 8 秒不返回）；
+   - **保活静音流杀链**（16:40 一次）。
+   两者均已处理：wireplumber 禁挂起规则生效中 + 保活已撤销。
+2. Jetson 曾整夜睡眠：今早 `adapter-not-powered`（适配器掉电），
+   唤醒后设备自动重连成功。**说明夜间断开也是 Jetson 睡眠所为，
+   不是设备自己断。**
+3. **13 分钟纯空闲观察窗结果（10-26 13:22–13:35，零故障）**：
+   修正后的 `robot/monitor_a2dp.sh`（每 10s 只读状态检查，每 60s
+   一次 3s 探测音）52 轮全绿，8 次真实探测音全部播通；
+   bluez 日志显示窗口内只有 wireplumber（bus owner :1.37382）
+   正常的 Acquire/Release 循环，**无 link loss、无 reason 码、
+   无设备侧断开**。→ 当前配置（禁挂起+无保活+三重检查兜底）
+   下至少 13 分钟尺度内问题不再复现。
+4. 注意：10-25 17:06 用户报"没声音"发生在 wireplumber 规则
+   生效后 ~6 分钟（probe=False 卡死型），随后 bt_reset 恢复、
+   之后直到 Jetson 睡眠（17:30）再未复现——可能是 wireplumber
+   重启后节点的遗留状态。若再遇卡死型，`bt_reset.sh` 可 20s 内恢复。
+5. 设备侧嫌疑（耳机主动睡 A2DP）在现有日志中**没有证据**：
+   所有链路断开都有明确归因（人为重置或保活静音流）。
+   手机抢占也未能证实（观察窗内无外源干扰）。
+
 ## 6. 当前精确状态（交给下家的起点）
 
 - bluetoothd 覆盖配置**已生效**（A2DP 可建立）。
@@ -115,4 +157,6 @@ sudo systemctl status bluetooth
 - `robot/app.py` — Streamlit 界面 + 播放三重检查 `_ensure_playable`
 - `robot/audio_io.py` — `probe()` / `bt_status()` / 播放（pw-play 优先，aplay 回退）
 - `robot/bt_reset.sh` — A2DP 重置脚本
+- `robot/monitor_a2dp.sh` — 取证监视器（10s 只读状态检查 + 60s 探测音，
+  故障自动抓快照不恢复；日志 `~/a2dp_monitor.log`，快照 `~/a2dp_fault_snapshot/`）
 - `ROBOT_README.md` — 完整排障史（"A2DP 假连接"一节）
