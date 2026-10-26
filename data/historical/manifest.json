@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-10-27",
+  "policy": "Each dataset has its own source, license, and version. Do not infer TTS compatibility from the presence of a transcription.",
+  "datasets": [
+    {
+      "id": "guangyun_qieyun_position",
+      "local_path": "data/historical/guangyun_positions.csv",
+      "source_url": "https://github.com/nk2028/tshet-uinh-data/blob/main/反切音韻地位/廣韻反切音韻地位表.csv",
+      "upstream_git_blob_sha": "93ca1b1551b30bba9c76fe21078f156b8299d9cc",
+      "license": "CC0-1.0",
+      "record_type": "rhyme-book source data / phonological position",
+      "contains_ipa": false,
+      "tts_ready": false
+    },
+    {
+      "id": "phono_ml_baxter_sagart_mc",
+      "local_path": "data/historical/phono_ml_characters.csv",
+      "source_url": "https://github.com/alxdrdelaporte/PHONO-ML_database/blob/main/phonoML_characters.csv",
+      "upstream_git_blob_sha": "e371665481c70b56534a618f42f620567ae5a762",
+      "license": "CC-BY-4.0",
+      "attribution_file": "data/historical/PHONO-ML_ATTRIBUTION.md",
+      "record_type": "Baxter-Sagart style Middle Chinese transcription",
+      "distinct_characters_reported_upstream": 20276,
+      "character_transcription_pairs_reported_upstream": 26224,
+      "contains_ipa": false,
+      "tts_ready": false
+    },
+    {
+      "id": "zhongyuan_yinyun",
+      "local_path": "data/historical/zhongyuan_yinyun.tsv",
+      "source_url": "https://github.com/nk2028/zhongyuan-data/blob/main/%E4%B8%AD%E5%8E%9F%E9%9F%B3%E9%9F%BB.tsv",
+      "upstream_git_blob_sha": "74b2b30565a2ac4c47b309fe1ff804c6b438c4a9",
+      "license": "CC0-1.0",
+      "record_type": "Zhongyuan Yinyun entries with multiple scholar-attributed reconstructions",
+      "data_rows": 5876,
+      "reconstruction_systems": [
+        "楊耐思",
+        "寧繼福",
+        "薛鳳生(音位)",
+        "unt(音位)",
+        "unt"
+      ],
+      "tts_ready": false
+    }
+  ]
+}
