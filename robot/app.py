@@ -96,7 +96,6 @@ from robot.voice_router import VoiceRouter
 from robot.audio_io import AudioIO, bt_status, BT_MAC
 from services import tts_client
 from language.ancient_tts import text_to_ipa, synthesize_ancient
-from language.turn_engine import make_turn
 from phonology_db import lookup_char, EASTERN_HAN_DB
 
 OUT_DIR = os.path.join(ROOT, "audio_out")
@@ -105,42 +104,93 @@ os.makedirs(OUT_DIR, exist_ok=True)
 
 # ---------- 后台生成（线程内不碰 Streamlit API，状态写 job 字典） ----------
 def _gen_worker(job, session, cfg):
-    """后台线程：LLM 生成 + TTS 合成 + 自动朗读，结果只写进 job。
+    """后台线程：LLM 生成 + 三类语音合成 + 自动朗读，结果只写进 job。
 
+    一次生成三段音频（互不干扰，各占独立播放对象）：
+      user      我的话·东汉古音（文言翻译，无翻译则用原话）
+      reply_anc 回答·东汉古音
+      reply_mod 回答·现代汉语（Edge TTS，需网络；失败则该段为空+说明）
     线程内不碰 st.session_state / st.*（避免跨线程上下文问题），
     所有状态落盘由主线程的轮询 fragment 在 result 就绪时统一完成。
     """
+    from services import llm_client
     try:
         job["phase"] = "qwen"
-        turn = make_turn(cfg["text"], mode=cfg["mode"],
-                         history=session.history(),
-                         pitch=cfg["pitch"], voice=cfg["voice"],
-                         rate=cfg["rate"], speed=cfg["speed"])
-        if turn.error:
-            job["result"] = ("error", f"生成失败：{turn.error}")
-            return
+        gen = llm_client.generate_turn(cfg["text"], session.history())
+        translation = (gen.get("translation") or "").strip()
+        reply = (gen.get("reply") or "").strip() or "善。"
+        reply_modern = (gen.get("reply_modern") or "").strip() or reply
+        source = gen.get("source", "local")
+
+        user_text = translation or cfg["text"]
+
+        def _do_user():
+            return "user", synthesize_ancient(
+                user_text, pitch=cfg["pitch"], speed=cfg["speed"])
+
+        def _do_reply_anc():
+            return "reply_anc", synthesize_ancient(
+                reply, pitch=cfg["pitch"], speed=cfg["speed"])
+
+        def _do_reply_mod():
+            # 现代汉语只做真 Edge TTS（断网则该段为空），绝不共振峰兜底
+            return "reply_mod", tts_client.speak_natural(
+                reply_modern, voice=cfg["voice"], rate=cfg["rate"])
+
+        # 三段并行合成（Orin 12 核，各自独立：formant 吃 CPU、Edge 等网络）
+        job["phase"] = "synth"
+        done = {"user": (b"", None), "reply_anc": (b"", None),
+                "reply_mod": (b"", None)}
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
+            futs = [ex.submit(f) for f in (_do_user, _do_reply_anc,
+                                           _do_reply_mod)]
+            for fut in concurrent.futures.as_completed(futs):
+                key, val = fut.result()
+                if key in ("user", "reply_anc"):
+                    wav, result = val
+                    done[key] = (wav, result)
+                else:  # reply_mod：直接是 mp3 字节（失败为 None）
+                    done["reply_mod"] = (val or b"", None)
+                job["phase"] = f"synth_{key}"
+        (wav_u, _), (wav_r, result_r), (mp3_m, _) = (
+            done["user"], done["reply_anc"], done["reply_mod"])
+        if not wav_r:
+            # 古音合成失败（极个别文本）→ 标注兜底，不装腔
+            source = f"{source}+ancient_fallback"
+
         job["result"] = ("ok", {
-            "translation": turn.translation,
-            "reply": turn.reply,
-            "reply_modern": turn.reply_modern,
-            "source": turn.source,
-            "mode": turn.mode,
-            "audio": turn.audio,
-            "audio_kind": turn.audio_kind,
-            "coverage": turn.coverage_pct,
-            "approx": turn.approx_chars,
             "user": cfg["text"],
+            "translation": translation,
+            "reply": reply,
+            "reply_modern": reply_modern,
+            "source": source,
+            "mode": cfg["mode"],
+            "coverage": result_r.coverage_pct if wav_r else 0.0,
+            "approx": result_r.approx if wav_r else 0,
+            "audios": {
+                "user": {"data": wav_u, "kind": "wav", "text": user_text},
+                "reply_anc": {"data": wav_r, "kind": "wav", "text": reply},
+                "reply_mod": {"data": mp3_m, "kind": "mp3",
+                              "text": reply_modern},
+            },
             "ms": time.time(),
         })
-        if not turn.audio:
+        if not (wav_u or wav_r or mp3_m):
             return
-        # 自动朗读（sink 检查 + 0.3s 探测；异常时 bt_reset.sh 兜底）
+        # 自动朗读：按模式选主段（自然语音→现代段；东汉古音→古音段），
+        # 主段缺失时按 古音回答 → 现代回答 → 我的话 顺序退
         job["phase"] = "play"
+        a = job["result"][1]["audios"]
+        pref = a["reply_mod"] if cfg["mode"] == "natural" else a["reply_anc"]
+        main = pref if pref["data"] else next(
+            (x for x in (a["reply_anc"], a["reply_mod"], a["user"])
+             if x["data"]), None)
         try:
             ai = get_audio_io()
             job["play_ok"] = _ensure_playable(ai, spinner=False)
             if job["play_ok"]:
-                ai.play_async(turn.audio)
+                ai.play_async(main["data"])
         except Exception:
             job["play_ok"] = False
     except Exception as e:
@@ -223,35 +273,6 @@ def analyze_reply(classical: str):
     return rows
 
 
-# ---------- 扩展朗读合成（白话回答 / 古文翻译） ----------
-def synth_extended(kind: str, text: str, router: VoiceRouter):
-    """按设置合成一段扩展朗读音频。
-
-    kind = "modern" → 现代汉语读回答（仅 Edge TTS 真自然语音；
-           网络不可用时返回空，绝不回退共振峰合成——那样一个字
-           一个蹦，比没声音更误导）
-    kind = "ancient_trans" → 古汉语朗读翻译（东汉音合成）
-    返回 (audio_bytes, kind)；失败返回 (b"", kind)。
-    """
-    if kind == "modern":
-        mp3 = tts_client.speak_natural(text, voice=router.voice,
-                                       rate=router.rate)
-        return (mp3, "mp3") if mp3 else (b"", "mp3")
-    # kind == "ancient_trans"
-    wav, _ = synthesize_ancient(text, pitch=router.pitch,
-                                speed=router.speed)
-    return (wav, "wav") if wav else (b"", "wav")
-
-
-def play_to_device(kind: str, text: str, router: VoiceRouter) -> bool:
-    """合成扩展朗读并后台发送到设备（不阻塞界面）"""
-    audio, fmt = synth_extended(kind, text, router)
-    if not audio:
-        return False
-    get_audio_io().play_async(audio)
-    return True
-
-
 def _bt_healthy() -> bool:
     """蓝牙音箱通道是否可播：A2DP sink 存在 + 是默认输出。
 
@@ -301,10 +322,46 @@ st.markdown("""
     .gi-h { font-size:0.78rem; color:var(--ink3); letter-spacing:0.22em; margin:1.4rem 0 0.55rem 0; font-weight:500; }
     .gi-gap { height:1.1rem; }
 
+    /* ============ 根治整页变暗 ============
+       Streamlit 在任何整页 rerun 时会把全部元素标记 data-stale=true，
+       内联 style 打上 opacity:0.33 + transition:1s（1.66 前端
+       styled-components 里 {opacity:a.stale}，stale=0.33）。
+       无论 rerun 多快，用户都会看到"整页缓缓变暗再恢复"。
+       该样式不只落在容器上，按钮/expander/tabs 自身也会各自内联
+       同一对象（opacity 沿 DOM 链相乘）→ 容器和后代都要覆盖。
+       !important 压过内联样式，彻底禁用；等待感改由下方
+       .gi-thinking 对话式动效表达（页面保持全亮可操作）。*/
+    [data-stale="true"], [data-stale="true"] * { opacity:1 !important; }
     .gi-meta { font-size:0.78rem; color:var(--ink3); letter-spacing:0.1em; margin-bottom:0.6rem; }
     .gi-status { display:flex; align-items:center; gap:0.6rem; font-size:0.95rem; color:var(--ink2); padding:0.9rem 0.4rem 0.3rem; }
     .gi-status::before { content:""; width:0.9rem; height:0.9rem; border:2px solid var(--line); border-top-color:var(--ink); border-radius:50%; animation:gi-spin 0.9s linear infinite; flex:none; }
     @keyframes gi-spin { to { transform:rotate(360deg); } }
+
+    /* 对话式"构思中"（参考主流聊天产品：气泡+呼吸点，不打暗整页） */
+    .gi-thinking { padding:1.2rem 0.4rem 0.4rem; }
+    .gi-thinking-user { font-family:'Noto Serif SC',serif; font-size:1.02rem; color:var(--ink);
+        letter-spacing:0.06em; margin:0 0 0.65rem 0.2rem; padding-left:0.8rem;
+        border-left:2px solid var(--seal); line-height:1.9; }
+    .gi-thinking-line { display:inline-flex; align-items:center; gap:0.6rem;
+        font-family:'Noto Serif SC',serif; font-size:1rem; color:var(--ink2);
+        letter-spacing:0.12em; padding:0.55rem 1.1rem;
+        background:var(--card); border:1px solid var(--line); border-radius:14px 14px 14px 4px; }
+    .gi-dot { display:inline-flex; gap:0.22rem; align-items:center; }
+    .gi-dot i { width:0.32rem; height:0.32rem; border-radius:50%; background:var(--seal);
+        display:inline-block; animation:gi-breathe 1.2s ease-in-out infinite; }
+    .gi-dot i:nth-child(2) { animation-delay:0.2s; }
+    .gi-dot i:nth-child(3) { animation-delay:0.4s; }
+    @keyframes gi-breathe { 0%,100% { opacity:0.25; transform:scale(0.8); }
+        50% { opacity:1; transform:scale(1.15); } }
+
+    /* 音频卡片（三段语音各占一卡：标题+文本+播放器+操作） */
+    .gi-audio-card { margin:0.9rem 0 0.3rem; padding:0.75rem 1rem 0.85rem;
+        background:var(--card); border:1px solid var(--line); border-radius:10px; }
+    .gi-audio-title { font-size:0.78rem; color:var(--ink3); letter-spacing:0.2em; margin-bottom:0.45rem; font-weight:500; }
+    .gi-audio-text { font-family:'Noto Serif SC',serif; font-size:0.98rem; line-height:1.9; color:var(--ink2); margin-bottom:0.35rem; }
+    .gi-audio-off .gi-audio-text { display:none; }
+    .gi-audio-offline { color:var(--ink3); font-size:0.82rem; letter-spacing:0.05em; padding:0.15rem 0 0.1rem; }
+    .gi-audio-off { background:transparent; border-style:dashed; }
     .gi-classical { font-family:'Noto Serif SC',serif; font-size:1.42rem; line-height:2.05; color:var(--ink); letter-spacing:0.05em; padding:0.1rem 0 0.1rem 1.1rem; border-left:2px solid #d8cfbc; margin:0.4rem 0; }
     .gi-classical.gi-small { font-size:1.1rem; }
     .gi-muteline { color:var(--ink2); font-size:0.92rem; line-height:1.9; margin:0.2rem 0; }
@@ -472,7 +529,8 @@ with col1:
         router.speed, router.pitch = cfg["speed"], cfg["pitch"]
         ss.gen_error = None
         ss.robot_input = ""
-        job = {"phase": "start", "result": None, "play_ok": None}
+        job = {"phase": "start", "result": None, "play_ok": None,
+               "user": text}
         ss.gen_job = job
         threading.Thread(target=_gen_worker,
                          args=(job, session, cfg),
@@ -497,13 +555,34 @@ with col2:
         st.session_state.gen_error = None
 
     # 后台生成状态区（独立 fragment 轮询，只刷新这一小块）
+    _PHASE_LABEL = {
+        "start": "正在构思…",
+        "qwen": "构思文言应答…",
+        "synth": "合成语音…",
+        "synth_user": "合成语音中 · 我的话…",
+        "synth_reply_anc": "合成语音中 · 古音回答…",
+        "synth_reply_mod": "合成语音中 · 现代回答…",
+        "play": "准备朗读…",
+    }
+
     @st.fragment(run_every=1)
     def _gen_status():
         job = st.session_state.get("gen_job")
         if not job or job["result"] is None:
             if job:
-                st.markdown(f'<div class="gi-status">{job["phase"]}</div>',
-                            unsafe_allow_html=True)
+                import html as _html
+                label = _PHASE_LABEL.get(job["phase"], "生成中…")
+                user = _html.escape((job.get("user") or "").strip())
+                # 对话式等待（参考主流聊天产品：页面保持全亮可操作，
+                # 等待感靠气泡动效表达——先回显用户那句话，再跟呼吸点）
+                user_html = (f'<div class="gi-thinking-user">{user}</div>'
+                             if user else "")
+                st.markdown(
+                    f'<div class="gi-thinking">{user_html}'
+                    f'<div class="gi-thinking-line">{label}'
+                    f'<span class="gi-dot"><i></i><i></i><i></i></span></div>'
+                    f'</div>',
+                    unsafe_allow_html=True)
             return
         kind, payload = job["result"]
         ss = st.session_state
@@ -516,9 +595,10 @@ with col2:
         ss.turns.append((payload["user"], payload["reply"],
                          "自然语音" if payload["mode"] == "natural" else "东汉古音"))
         ss.turns = ss.turns[-session.max_turns:]
-        if payload["audio"]:
-            ss.play_note = ("已朗读到默认输出设备" if job.get("play_ok")
-                            else "已生成（自动朗读失败，可点「设备播放」重试）")
+        if job.get("play_ok") is True:
+            ss.play_note = "已朗读到默认输出设备"
+        elif job.get("play_ok") is False:
+            ss.play_note = "已生成（自动朗读失败，可点「设备播放」重试）"
         st.rerun(scope="app")
 
     _gen_status()
@@ -549,83 +629,58 @@ with col2:
             st.markdown(f'<div class="gi-muteline">白话：{res["reply_modern"]}</div>',
                         unsafe_allow_html=True)
 
-        # 音频
-        st.markdown('<div class="gi-h">音频</div>', unsafe_allow_html=True)
-        fmt = "audio/wav" if res["audio_kind"] == "wav" else "audio/mpeg"
-        st.audio(res["audio"], format=fmt)
+        # 三段音频（每次生成都产出：我的话·古音 / 回答·古音 / 回答·现代）
+        st.markdown('<div class="gi-h">语音</div>', unsafe_allow_html=True)
         if st.session_state.get("play_note"):
             st.caption(st.session_state.play_note)
-
-        # 操作（2×2，主次分明：前两格是主操作，后两格是扩展朗读）
-        c1, c2 = st.columns(2, gap="small")
-        with c1:
-            if st.button("设备播放", key="dev_play", use_container_width=True,
-                         help="检查并修复蓝牙通道后，用默认输出设备播放"):
-                ai = get_audio_io()
-                if _ensure_playable(ai):
-                    ai.play_async(res["audio"])
-                    st.session_state.play_note = "已发送到默认输出设备"
-                else:
-                    st.error("播放通道异常：自动重连后仍无法播放，请检查设备电源/距离")
-        with c2:
-            fname = f"guyin_{int(res['ms'])}.{res['audio_kind']}"
-            st.download_button("下载", res["audio"], file_name=fname,
-                               mime=fmt, use_container_width=True, key="dl_btn")
-
-        c3, c4 = st.columns(2, gap="small")
-        with c3:
-            if st.button("回答 · 现代汉语", key="tts_modern", use_container_width=True,
-                         help="把回答用普通话朗读（Edge TTS，需网络）"):
-                text = res.get("reply_modern") or res["reply"]
-                with st.spinner("合成现代汉语朗读（需网络）…"):
-                    audio, k = synth_extended("modern", text, router)
-                if audio:
-                    ai = get_audio_io()
-                    if _ensure_playable(ai):
-                        ai.play_async(audio)
-                        st.session_state.ext_audio = (audio, k)
-                        st.session_state.ext_label = "回答 · 现代汉语"
-                        st.session_state.ext_text = text
-                        st.session_state.ext_ipa = ""
-                    else:
-                        st.error("播放通道异常，自动重连后仍无法播放")
-                else:
-                    st.error("现代汉语朗读需要网络（Edge TTS）：当前网络不可用。"
-                             "白话朗读不做本地兜底合成（音质差、一个字一个蹦）。")
-        with c4:
-            if st.button("我的话 · 古汉语", key="tts_ancient_trans", use_container_width=True,
-                         help="把我的话翻成文言，用东汉音朗读"):
-                text = res.get("translation") or res["user"]
-                with st.spinner("合成古汉语朗读…"):
-                    audio, k = synth_extended("ancient_trans", text, router)
-                if audio:
-                    ai = get_audio_io()
-                    if _ensure_playable(ai):
-                        ai.play_async(audio)
-                        st.session_state.ext_audio = (audio, k)
-                        st.session_state.ext_label = "我的翻译 · 东汉古音"
-                        st.session_state.ext_text = text
-                        st.session_state.ext_ipa = text_to_ipa(text).ipa_text
-                    else:
-                        st.error("播放通道异常，自动重连后仍无法播放")
-                else:
-                    st.warning("古音合成失败（无有效字符？）")
-
-        # 扩展朗读的浏览器内回放
-        if st.session_state.get("ext_audio"):
-            ea, ek = st.session_state.ext_audio
-            st.markdown(f'<div class="gi-h">{st.session_state.get("ext_label", "回放")}</div>',
+        audios = res.get("audios") or {}
+        _CARD_ORDER = [
+            ("user", "我的话 · 东汉古音"),
+            ("reply_anc", "回答 · 东汉古音"),
+            ("reply_mod", "回答 · 现代汉语"),
+        ]
+        for key, label in _CARD_ORDER:
+            item = audios.get(key)
+            if not item or not item["data"]:
+                if key == "reply_mod":
+                    st.markdown(
+                        f'<div class="gi-audio-card gi-audio-off">'
+                        f'<div class="gi-audio-title">{label}</div>'
+                        f'<div class="gi-audio-offline">网络不可用，未生成'
+                        f'（现代汉语不做本地兜底合成）</div></div>',
                         unsafe_allow_html=True)
-            efmt = "audio/wav" if ek == "wav" else "audio/mpeg"
-            st.audio(ea, format=efmt)
-            ex_text = st.session_state.get("ext_text", "")
-            if ex_text:
-                st.markdown(f'<div class="gi-classical gi-small">{ex_text}</div>',
-                            unsafe_allow_html=True)
-            ex_ipa = st.session_state.get("ext_ipa", "")
-            if ex_ipa:
-                st.markdown(f'<div class="gi-ipa">{ex_ipa}</div>',
-                            unsafe_allow_html=True)
+                elif key in ("user", "reply_anc"):
+                    st.markdown(
+                        f'<div class="gi-audio-card gi-audio-off">'
+                        f'<div class="gi-audio-title">{label}</div>'
+                        f'<div class="gi-audio-offline">合成失败'
+                        f'（无有效汉字？）</div></div>',
+                        unsafe_allow_html=True)
+                continue
+            st.markdown(
+                f'<div class="gi-audio-card">'
+                f'<div class="gi-audio-title">{label}</div>'
+                f'<div class="gi-audio-text">{item["text"]}</div>'
+                f'</div>',
+                unsafe_allow_html=True)
+            fmt = "audio/wav" if item["kind"] == "wav" else "audio/mpeg"
+            st.audio(item["data"], format=fmt)
+            cb1, cb2 = st.columns([3, 2], gap="small")
+            with cb1:
+                if st.button("设备播放", key=f"dev_play_{key}",
+                             use_container_width=True,
+                             help="检查并修复蓝牙通道后，用默认输出设备播放"):
+                    ai = get_audio_io()
+                    if _ensure_playable(ai):
+                        ai.play_async(item["data"])
+                        st.session_state.play_note = f"已发送到默认输出设备（{label}）"
+                    else:
+                        st.error("播放通道异常：自动重连后仍无法播放，请检查设备电源/距离")
+            with cb2:
+                fname = f"guyin_{key}_{int(res['ms'])}.{item['kind']}"
+                st.download_button("下载", item["data"], file_name=fname,
+                                   mime=fmt, use_container_width=True,
+                                   key=f"dl_{key}")
 
         # 东汉 IPA（古音模式）
         if res["mode"] == "ancient":
