@@ -2,7 +2,7 @@
 import unittest
 from language.history import (TIMELINE, get_period, get_system, lookup_reading,
                               lookup_qieyun_positions, period_at,
-                              qieyun_record_count, systems_for_period)
+                              qieyun_record_count, systems_for_period,\n                              lookup_phono_ml, phono_ml_record_count,\n                              lookup_zhongyuan, zhongyuan_record_count)
 
 
 class TimelineTests(unittest.TestCase):
@@ -57,7 +57,47 @@ class SystemsTests(unittest.TestCase):
         systems = systems_for_period("middle_chinese", include_metadata_only=False)
         self.assertIn("guangyun_qieyun_position", [s.id for s in systems])
 
-    def test_unintegrated_system_does_not_invent_ipa(self):
+
+    def test_phono_ml_dataset_is_bundled_and_queryable(self):
+        self.assertGreater(phono_ml_record_count(), 20000)
+        records = lookup_phono_ml("東")
+        self.assertTrue(records)
+        self.assertTrue(records[0].transcription)
+        self.assertEqual(records[0].transcription_scheme,
+                         "Baxter-Sagart Middle Chinese transcription")
+
+    def test_phono_ml_reading_is_not_mislabeled_as_ipa(self):
+        reading = lookup_reading("東", "phono_ml_baxter_sagart_mc")
+        self.assertTrue(reading.has_record)
+        self.assertFalse(reading.available)
+        self.assertEqual(reading.source_status, "source_reconstruction")
+        self.assertTrue(reading.transcription)
+        self.assertIn("e371665481c70b56534a618f42f620567ae5a762",
+                      reading.provenance.source_version)
+
+    def test_zhongyuan_dataset_has_multiple_scholarly_systems(self):
+        self.assertGreater(zhongyuan_record_count(), 5000)
+        records = lookup_zhongyuan("東", "zhongyuan_yangnaisi")
+        self.assertTrue(records)
+        self.assertEqual(records[0].transcriptions[0][0], "zhongyuan_yangnaisi")
+        self.assertTrue(dict(records[0].transcriptions)["zhongyuan_yangnaisi"])
+
+    def test_zhongyuan_reading_is_scheme_specific_and_traceable(self):
+        reading = lookup_reading("東", "zhongyuan_yangnaisi")
+        self.assertTrue(reading.has_record)
+        self.assertFalse(reading.available)
+        self.assertEqual(reading.source_status, "source_reconstruction")
+        self.assertTrue(reading.transcription)
+        self.assertEqual(reading.transcription_scheme, "中原音韵拟音（杨耐思）")
+        self.assertIn("74b2b30565a2ac4c47b309fe1ff804c6b438c4a9",
+                      reading.provenance.source_version)
+
+    def test_new_systems_appear_in_period_filters(self):
+        mc = systems_for_period("middle_chinese", include_metadata_only=False)
+        yuan = systems_for_period("early_mandarin", include_metadata_only=False)
+        self.assertIn("phono_ml_baxter_sagart_mc", [s.id for s in mc])
+        self.assertIn("zhongyuan_yangnaisi", [s.id for s in yuan])
+\n    def test_unintegrated_system_does_not_invent_ipa(self):
         r = lookup_reading("天", "baxter_sagart_oc")
         self.assertFalse(r.available)
         self.assertEqual(r.source_status, "not_integrated")
