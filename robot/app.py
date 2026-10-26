@@ -293,12 +293,15 @@ def _ensure_playable(ai, spinner=True) -> bool:
     """
     if _bt_healthy() and ai.probe():
         return True
+    # 显式 bash 调用：不依赖脚本可执行位（曾被同步/拷贝丢成 600，
+    # 导致 PermissionError）；cwd=ROOT 保证脚本内相对路径可用
+    _bt_reset = os.path.join(ROOT, "robot", "bt_reset.sh")
     if spinner:
         with st.spinner("蓝牙通道异常，正在自动重连…"):
-            subprocess.run([os.path.join(ROOT, "robot", "bt_reset.sh")],
+            subprocess.run(["bash", _bt_reset], cwd=ROOT,
                            capture_output=True, timeout=120)
     else:
-        subprocess.run([os.path.join(ROOT, "robot", "bt_reset.sh")],
+        subprocess.run(["bash", _bt_reset], cwd=ROOT,
                        capture_output=True, timeout=120)
     return _bt_healthy() and ai.probe()
 
