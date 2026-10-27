@@ -93,7 +93,8 @@ _autoreload_changed_modules()
 import yaml
 from robot.session import Session
 from robot.voice_router import VoiceRouter
-from robot.audio_io import AudioIO, bt_status, BT_MAC, _list_pw_sinks
+from robot.audio_io import (AudioIO, bt_status, BT_MAC, _list_pw_sinks,
+                            ensure_audible)
 from services import tts_client
 from language.ancient_tts import text_to_ipa, synthesize_ancient
 from phonology_db import lookup_char, EASTERN_HAN_DB
@@ -187,13 +188,16 @@ def _gen_worker(job, session, cfg):
         try:
             if main and main["data"]:
                 ai = get_audio_io()
-                job["play_ok"] = _ensure_playable(ai, spinner=False)
+                job["play_ok"], job["vol_note"] = \
+                    _ensure_playable(ai, spinner=False)
                 if job["play_ok"]:
                     ai.play_async(main["data"])
             else:
                 job["play_ok"] = None
+                job["vol_note"] = None
         except Exception:
             job["play_ok"] = False
+            job["vol_note"] = None
         # 朗读就绪标记：fragment 以此为"整轮完成"信号落盘
         # （避免先落盘后朗读，导致 play_note 永远取不到值）
         job["play_done"] = True
@@ -299,25 +303,26 @@ def _bt_healthy() -> bool:
     return bool(s["sink_id"] and s["is_default"])
 
 
-def _ensure_playable(ai, spinner=True) -> bool:
-    """确保**默认输出设备**可播（设备无关：蓝牙 / USB / 内置均支持）。
+def _ensure_playable(ai, spinner=True):
+    """确保播放目标可出声 → (ok: bool, vol_note: str|None)。
 
-    播放走 PipeWire 默认输出（pw-play 自动跟随当前选择的设备）：
-      - 默认输出是蓝牙 A2DP sink：sink 存在（消失=无声但不报错）
-        + 通道探测；probe 失败（假连接/挂死）才 bt_reset.sh 自动重连
-      - 默认输出是其他设备（用户主动切到 USB/内置等）：只探测默认
-        通道，绝不触发蓝牙重连——重连蓝牙会把默认输出抢回耳机，
-        适得其反
-    正常时 ~2.5s；仅蓝牙假连接时走 bt_reset.sh（~20s）。
+    两层"无声但不报错"的坑都要查（否则 pw-play rc=0、你听不见）：
+      1) 音量为 0：BT 音箱常把自己面板音量同步过来（可能为 0）→
+         ensure_audible 自动抬到 45% 并给提示
+      2) 通道假死：默认输出是蓝牙 A2DP sink 且 probe 失败 → bt_reset.sh
+         自动重连一次；非蓝牙默认只探测、绝不触发蓝牙重连（重连会把
+         默认抢回耳机）
+    vol_note 非空 = 本次播放前动过/发现音量问题，供 play_note 展示。
     spinner=False 用于自动朗读路径（避免每次生成都闪转圈）。
     """
+    vol_note = ensure_audible(ai.playback_device, ai.playback_target)
     s = bt_status(BT_MAC)
     if not s["is_default"]:
         # 默认输出不是蓝牙（用户切到 USB/内置等，或蓝牙未连）：
         # 只探测默认通道，绝不触发蓝牙重连
-        return ai.probe()
+        return (bool(ai.probe()), vol_note)
     if ai.probe():
-        return True
+        return (True, vol_note)
     # 蓝牙是默认输出但探测失败（A2DP 假连接/挂死）→ 自动重连一次
     _bt_reset = os.path.join(ROOT, "robot", "bt_reset.sh")
     if spinner:
@@ -327,7 +332,7 @@ def _ensure_playable(ai, spinner=True) -> bool:
     else:
         subprocess.run(["bash", _bt_reset], cwd=ROOT,
                        capture_output=True, timeout=120)
-    return _bt_healthy() and ai.probe()
+    return (_bt_healthy() and bool(ai.probe()), vol_note)
 
 
 # ---------- 页面（简约素雅版） ----------
@@ -681,8 +686,10 @@ with col2:
         ss.turns.append((payload["user"], payload["reply"],
                          "自然语音" if payload["mode"] == "natural" else "东汉古音"))
         ss.turns = ss.turns[-session.max_turns:]
+        vol = job.get("vol_note")
         if job.get("play_ok") is True:
-            ss.play_note = "已朗读到默认输出设备"
+            ss.play_note = ("已朗读到默认输出设备"
+                            + (f"（{vol}）" if vol else ""))
         elif job.get("play_ok") is False:
             ss.play_note = "已生成（自动朗读失败，可点「设备播放」重试）"
         st.rerun(scope="app")
@@ -758,9 +765,12 @@ with col2:
                              use_container_width=True,
                              help="检查并修复蓝牙通道后，用默认输出设备播放"):
                     ai = get_audio_io()
-                    if _ensure_playable(ai):
+                    ok, vol = _ensure_playable(ai)
+                    if ok:
                         ai.play_async(item["data"])
-                        st.session_state.play_note = f"已发送到默认输出设备（{label}）"
+                        st.session_state.play_note = \
+                            f"已发送到默认输出设备（{label}）" + \
+                            (f"（{vol}）" if vol else "")
                     else:
                         st.error("播放通道异常：自动重连后仍无法播放，请检查设备电源/距离")
             with cb2:

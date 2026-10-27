@@ -70,7 +70,12 @@ def _resolve_device(configured: str, kind: str) -> str:
 
 
 def _list_pw_sinks() -> list:
-    """解析 wpctl status → [(serial:int, name:str, is_default:bool), ...]"""
+    """解析 wpctl status → [(serial, name, is_default, vol), ...]
+
+    带音量：BT 音箱常以自己的硬件音量同步过来（可能为 0），
+    此时 sink 在、通道通、pw-play 不报错，但全程无声——
+    必须显式查音量才能发现。
+    """
     try:
         out = subprocess.run(["wpctl", "status"], capture_output=True,
                              text=True, timeout=10).stdout
@@ -81,10 +86,10 @@ def _list_pw_sinks() -> list:
     block = out[start:end] if start >= 0 and end > start else ""
     sinks = []
     for line in block.splitlines():
-        m = re.search(r"(\*?)\s*(\d+)\.\s+(.+?)\s+\[vol:", line)
+        m = re.search(r"(\*?)\s*(\d+)\.\s+(.+?)\s+\[vol:\s*([\d.]+)\]", line)
         if m:
             sinks.append((int(m.group(2)), m.group(3).strip(),
-                          m.group(1) == "*"))
+                          m.group(1) == "*", float(m.group(4))))
     return sinks
 
 
@@ -122,6 +127,58 @@ def _pw_node_names(mac: str) -> set:
     return names
 
 
+def _effective_sink(playback_device, target_name=None):
+    """pw-play 实际会打到的 sink → (serial, name, vol) 或 None。
+    有 --target 时是定向目标；否则是 PipeWire 默认 sink。"""
+    target = _target_sink(playback_device, target_name)
+    for s, name, is_def, vol in _list_pw_sinks():
+        if target is None and is_def:
+            return (s, name, vol)
+        if target is not None and name == target:
+            return (s, name, vol)
+    return None
+
+
+def set_pw_volume(serial, vol: float) -> bool:
+    """设某 sink 音量（0.0~1.0）。
+
+    本机 wpctl 版本语法是 `set-volume <数字ID> <音量>`
+    （`sink:` 前缀会报 not a valid number）。
+    """
+    try:
+        r = subprocess.run(["wpctl", "set-volume", str(serial),
+                            f"{vol:.2f}"],
+                           capture_output=True, text=True, timeout=10)
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
+def ensure_audible(playback_device, target_name=None):
+    """确保 pw-play 实际会打到的 sink 音量 > 0。
+
+    蓝牙音箱常把自己面板上的音量同步过来（可能为 0）——此时
+    sink 在、A2DP 通道通、pw-play 不报错，但全程无声。这是
+    "连上却听不见"的主因（区别于 Built-in 空接口：那个连 sink
+    都没有物理输出）。为 0 时自动抬到 45%。
+    返回提示语（无问题返回 None）。
+    """
+    try:
+        eff = _effective_sink(playback_device, target_name)
+    except Exception:
+        return None
+    if not eff:
+        return None
+    serial, name, vol = eff
+    if vol is not None and vol <= 0.01:
+        if set_pw_volume(serial, 0.45):
+            print(f"[audio] {name} 音量为 0，已自动调到 45%")
+            return (f"{name} 音量原本是 0（这就是听不见的原因），"
+                    "已自动调到 45%")
+        return f"{name} 音量为 0，自动调音量失败，请手动把该设备音量调大"
+    return None
+
+
 def _target_sink(playback_device: str, target_name=None):
     """决定 pw-play --target 的取值；None = 跟随 PipeWire 默认输出。
 
@@ -141,7 +198,7 @@ def _target_sink(playback_device: str, target_name=None):
     if not sinks:
         return None
     if target_name:
-        names = {name for _, name, _ in sinks}
+        names = {name for _, name, _, _ in sinks}
         if target_name in names:
             return target_name
         # 选定设备离线 → 落到下方 auto 逻辑
@@ -150,7 +207,7 @@ def _target_sink(playback_device: str, target_name=None):
     default = next((s for s in sinks if s[2]), None)
     if not default or not default[1].lower().startswith("built-in"):
         return None
-    for _, name, _ in sinks:
+    for _, name, _, _ in sinks:
         if playback_device.lower() in name.lower():
             return name
     return None
