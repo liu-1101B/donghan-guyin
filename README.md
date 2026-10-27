@@ -167,4 +167,4 @@ python -m unittest discover -s tests -p "test_historical_phonology.py" -v
 
 ### 中央研究院古今音资料库（官方 PDM 下载资料）
 
-已提供专用导入器与查询面板。先下载/获取规范化数据包并解压到 data/historical/sinica_ccr_import/，再启动应用；若目录没有 sinica_ccr_records.jsonl.gz，界面会说明数据包尚未安装。详见 data/historical/README.md。
+三个官方 PDM 数据包已通过 SHA-256 校验并导入本分支，现含 26 个工作簿、34 个工作表、378,214 条记录。Streamlit 页面底部的「中央研究院古今音资料库」折叠面板可按数据包、时期、学者／韵书名称和单字查询；结果保留原始字段、工作簿、工作表、源行号与 SHA-256。详见 [数据来源与许可](data/historical/README.md) 和 [导入清单](data/historical/sinica_ccr_import/manifest.json)。
