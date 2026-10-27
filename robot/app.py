@@ -72,14 +72,24 @@ def _autoreload_changed_modules():
             if m is not None and seen.get(name) is not None and m > seen[name]:
                 changed.append(name)
     if changed:
+        failed = []
         for name in _RELOAD_ORDER:   # 全部按依赖顺序重载
             try:
                 importlib.reload(importlib.import_module(name))
             except Exception as e:
+                failed.append(name)
                 st.session_state._reload_warn = f"重载 {name} 失败：{e}"
-        st.session_state._reloaded = ", ".join(changed)
-        st.session_state._changed_mods = set(changed)
-        seen = dict(mtimes)
+        if failed:
+            # 有模块重载失败：**不推进基线**（旧基线保留 → 下次仍判定为
+            # "需重载"并重试）。若照旧推进，会出现 磁盘新 / 内存旧 /
+            # 基线已新 的错位——之后 m>seen 永远不成立，热重载彻底
+            # 停摆，app.py 顶层 import 持续命中旧缓存模块 → ImportError
+            # 卡死（10/27 ensure_audible 事故根因）。
+            st.session_state._reload_failed = ", ".join(failed)
+        else:
+            st.session_state._reloaded = ", ".join(changed)
+            st.session_state._changed_mods = set(changed)
+            seen = dict(mtimes)
     try:
         with open(_RELOAD_STATE, "w", encoding="utf-8") as f:
             json.dump(seen, f)
