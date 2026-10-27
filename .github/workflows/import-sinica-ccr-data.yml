@@ -1,0 +1,117 @@
+name: Import official Sinica CCR data
+
+on:
+  push:
+    branches:
+      - feat/historical-phonology-foundation
+    paths:
+      - ".github/workflows/import-sinica-ccr-data.yml"
+      - "scripts/import_sinica_ccr.py"
+      - "data/historical/manifest.json"
+
+permissions:
+  contents: write
+
+jobs:
+  import-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile and run existing tests
+        run: |
+          python -m compileall -q language/history scripts guyun_app.py
+          python -m unittest discover -s tests -p "test_historical_phonology.py" -v
+      - name: Download and verify official archives, normalize, verify query, and commit
+        env:
+          EXPECTED_OLD_SHA256: 4d23f2961704e7219deee67d66bcc45e40cb177e3488a7ca1281d271cc408f4f
+          EXPECTED_MIDDLE_SHA256: f6c4599307fa5f048e821ff20bd574cdf752b3c791d3046772e71c299816486e
+          EXPECTED_RHYME_SHA256: 055dfcf3fb55c83257372bc900f42722c32cc7c24ce397c17ce10a5e51f19b01
+        run: |
+          set -euo pipefail
+          DATA_DIR="data/historical/sinica_ccr_import"
+          if [ -f "$DATA_DIR/sinica_ccr_records.jsonl.gz" ]; then
+            echo "Sinica CCR payload already exists; skipping import."
+            exit 0
+          fi
+
+          mkdir -p "$RUNNER_TEMP/sinica-ccr-source"
+          curl --fail --location --retry 3 --retry-delay 2 \
+            "https://xiaoxue.iis.sinica.edu.tw/ccrdata/file/ccr01_shangguyin_data_xlsx.zip" \
+            -o "$RUNNER_TEMP/sinica-ccr-source/ccr01_shangguyin_data_xlsx.zip"
+          curl --fail --location --retry 3 --retry-delay 2 \
+            "https://xiaoxue.iis.sinica.edu.tw/ccrdata/file/ccr02_zhongguyin_data_xlsx.zip" \
+            -o "$RUNNER_TEMP/sinica-ccr-source/ccr02_zhongguyin_data_xlsx.zip"
+          curl --fail --location --retry 3 --retry-delay 2 \
+            "https://xiaoxue.iis.sinica.edu.tw/ccrdata/file/ccr03_yunshu_data_xlsx.zip" \
+            -o "$RUNNER_TEMP/sinica-ccr-source/ccr03_yunshu_data_xlsx.zip"
+
+          echo "$EXPECTED_OLD_SHA256  $RUNNER_TEMP/sinica-ccr-source/ccr01_shangguyin_data_xlsx.zip" | sha256sum --check -
+          echo "$EXPECTED_MIDDLE_SHA256  $RUNNER_TEMP/sinica-ccr-source/ccr02_zhongguyin_data_xlsx.zip" | sha256sum --check -
+          echo "$EXPECTED_RHYME_SHA256  $RUNNER_TEMP/sinica-ccr-source/ccr03_yunshu_data_xlsx.zip" | sha256sum --check -
+
+          python scripts/import_sinica_ccr.py \
+            --old-chinese "$RUNNER_TEMP/sinica-ccr-source/ccr01_shangguyin_data_xlsx.zip" \
+            --middle-chinese "$RUNNER_TEMP/sinica-ccr-source/ccr02_zhongguyin_data_xlsx.zip" \
+            --rhyme-books "$RUNNER_TEMP/sinica-ccr-source/ccr03_yunshu_data_xlsx.zip" \
+            --out-dir "$DATA_DIR"
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          manifest_path = Path("data/historical/sinica_ccr_import/manifest.json")
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          assert manifest["total_workbooks"] == 26, manifest["total_workbooks"]
+          assert manifest["total_sheets"] == 34, manifest["total_sheets"]
+          assert manifest["total_records"] == 378214, manifest["total_records"]
+          root_path = Path("data/historical/manifest.json")
+          root = json.loads(root_path.read_text(encoding="utf-8"))
+          root["prepared_normalized_bundle"]["status"] = "integrated_in_git"
+          root["prepared_normalized_bundle"]["payload_path"] = (
+              "data/historical/sinica_ccr_import/sinica_ccr_records.jsonl.gz"
+          )
+          root["prepared_normalized_bundle"]["normalized_file_sha256"] = (
+              manifest["normalized_file_sha256"]
+          )
+          root["prepared_normalized_bundle"]["normalized_file_size_bytes"] = (
+              manifest["normalized_file_size_bytes"]
+          )
+          root["prepared_normalized_bundle"]["total_workbooks"] = manifest["total_workbooks"]
+          root["prepared_normalized_bundle"]["total_sheets"] = manifest["total_sheets"]
+          root["prepared_normalized_bundle"]["total_records"] = manifest["total_records"]
+          for item in root.get("candidate_sources", []):
+              item["status"] = "integrated_in_git"
+              item["note"] = (
+                  "Official archive hash verified; normalized PDM source records are "
+                  "committed in data/historical/sinica_ccr_import/."
+              )
+          root_path.write_text(json.dumps(root, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+          PY
+
+          python - <<'PY'
+          from language.history.sinica_ccr_data import (
+              sinica_ccr_record_count, lookup_sinica_ccr_records,
+          )
+          count = sinica_ccr_record_count()
+          assert count == 378214, count
+          rows = lookup_sinica_ccr_records(
+              "東", dataset_id="sinica_ccr_old_chinese", period="东汉", limit=20
+          )
+          assert rows, "Expected Eastern Han records for 東"
+          assert any(row.fields.get("韻部") == "東" for row in rows), rows
+          print(f"Validated {count:,} Sinica CCR rows; Eastern Han 東 lookup returned {len(rows)} records.")
+          PY
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$DATA_DIR" data/historical/manifest.json
+          if git diff --cached --quiet; then
+            echo "No data files changed; nothing to commit."
+          else
+            git commit -m "data: import official Sinica CCR PDM datasets"
+            git push origin "HEAD:$GITHUB_REF_NAME"
+          fi
