@@ -127,14 +127,20 @@ def _pw_node_names(mac: str) -> set:
     return names
 
 
-def _effective_sink(playback_device, target_name=None):
+def _effective_sink(playback_name, target_name=None):
     """pw-play 实际会打到的 sink → (serial, name, vol) 或 None。
-    有 --target 时是定向目标；否则是 PipeWire 默认 sink。"""
-    target = _target_sink(playback_device, target_name)
-    for s, name, is_def, vol in _list_pw_sinks():
-        if target is None and is_def:
-            return (s, name, vol)
-        if target is not None and name == target:
+    有 --target 时是定向目标（node.name）；否则是 PipeWire 默认 sink。
+    用于 ensure_audible 查/修该 sink 的音量。"""
+    target = _target_sink(playback_name, target_name)
+    sinks = _list_pw_sinks()
+    if target is None:
+        for s, name, is_def, vol in sinks:
+            if is_def:
+                return (s, name, vol)
+        return None
+    # target 是 node.name → 反查 serial
+    for s, name, _, vol in sinks:
+        if _sink_node_name(s) == target:
             return (s, name, vol)
     return None
 
@@ -179,8 +185,27 @@ def ensure_audible(playback_device, target_name=None):
     return None
 
 
-def _bt_a2dp_sink_names() -> set:
-    """当前在线的蓝牙 A2DP sink 显示名集合。
+def _sink_node_name(serial) -> str:
+    """某 sink 的 node.name（pw-play --target 真正认的值）。
+
+    实测（10/27 决定性实验）：pw-play --target 只认 node.name
+    （如 bluez_output.6D_4D_... / alsa_output.usb-... /
+    alsa_output.platform-...）；传 wpctl serial 或 sink 显示名
+    （node.description，如 "BS-32D"）都不认 → **静默回退到默认
+    输出**且 rc=0 不报错。所以定向必须给 node.name。
+    """
+    try:
+        info = subprocess.run(["wpctl", "inspect", str(serial)],
+                              capture_output=True, text=True,
+                              timeout=10).stdout
+    except Exception:
+        return ""
+    m = re.search(r'node\.name\s*=\s*"([^"]+)"', info)
+    return m.group(1) if m else ""
+
+
+def _bt_a2dp_sink_node_names() -> set:
+    """当前在线的蓝牙 A2DP sink 的 **node.name** 集合。
 
     bluez A2DP sink 的 node.name 形如 `bluez_output.<MAC下划线>`，
     以此识别"这是蓝牙音箱/耳机"（区别于 USB 声卡 / 内置）。
@@ -189,56 +214,52 @@ def _bt_a2dp_sink_names() -> set:
     """
     names = set()
     for serial, sname, _, _ in _list_pw_sinks():
-        try:
-            info = subprocess.run(["wpctl", "inspect", str(serial)],
-                                  capture_output=True, text=True,
-                                  timeout=10).stdout
-        except Exception:
-            continue
-        m = re.search(r'node\.name\s*=\s*"([^"]+)"', info)
-        if m and "bluez_output." in m.group(1):
-            names.add(sname)
+        nn = _sink_node_name(serial)
+        if nn and "bluez_output." in nn:
+            names.add(nn)
     return names
 
 
-def _target_sink(playback_device: str, target_name=None):
+def _target_sink(playback_name: str, target_name=None):
     """决定 pw-play --target 的取值；None = 跟随 PipeWire 默认输出。
 
-    返回值直接是 pw-play 能认的名字/serial（--target 两者皆可）。
-    target_name（界面选定的 sink 显示名）→ 在线就直接定向它；
-    离线（如蓝牙断开）→ 落到下方 auto 逻辑，不发 Built-in 空接口。
+    **返回值必须是 node.name**（如 bluez_output.6D_4D_... /
+    alsa_output.usb-...）：实测 pw-play --target 只认 node.name，
+    传 wpctl serial 或 sink 显示名都不认 → 静默回退默认输出且
+    rc=0 不报错（10/27 决定性实验：serial/显示名 → Built-in 吃数据、
+    目标节点 0 字节；node.name → 目标节点 48kHz 编码推流）。
+    target_name（界面选定的 sink **显示名**，选择框里显示的就是它）
+    → 在线就解析成它的 node.name 定向；离线（蓝牙断开）→ 落 auto。
     target_name=None → 智能跟随：
       本机 Jetson AGX Orin 无内置喇叭：默认输出掉回 Built-in 基本
       等于"没有真实输出"（蓝牙断开/USB 被切走后系统常这样回落）。
       此时按优先级定向，否则声音发给空接口，"能播"但听不见：
-        1) 已连接的蓝牙 A2DP sink（你主动连了耳机/音箱就给它——
-           优先级最高，因为"刚连上的蓝牙"几乎总是用户想要的）
-        2) playback_device（设备名子串）对应的 sink（如 USB 声卡）
+        1) 已连接的蓝牙 A2DP sink（你主动连了耳机/音箱就给它）
+        2) playback_name（设备名子串）对应的 sink（如 USB 声卡）
       默认输出是真实设备（蓝牙/USB/HDMI，用户主动选的）→ 跟随默认，
-      蓝牙 A2DP 流程不受影响。显式 plughw:/hw: 前缀 → 跟随默认
-      （aplay 回退已指定卡）。
+      蓝牙 A2DP 流程不受影响。
     """
     sinks = _list_pw_sinks()
     if not sinks:
         return None
     if target_name:
-        names = {name for _, name, _, _ in sinks}
-        if target_name in names:
-            return target_name
-        # 选定设备离线 → 落到下方 auto 逻辑
-    if playback_device.startswith(("plughw:", "hw:", "plug:")):
-        return None
+        # 界面传的是显示名 → 解析成 node.name（pw-play 只认这个）
+        for serial, sname, _, _ in sinks:
+            if sname == target_name:
+                return _sink_node_name(serial)
+        # 选定设备离线（如蓝牙断开）→ 落到下方 auto 逻辑
     default = next((s for s in sinks if s[2]), None)
     if not default or not default[1].lower().startswith("built-in"):
         return None
     # 默认掉回 Built-in（无物理输出）→ 定向到真实设备
-    bt_names = _bt_a2dp_sink_names()
-    for _, name, _, _ in sinks:          # 1) 已连蓝牙优先
-        if name in bt_names:
-            return name
-    for _, name, _, _ in sinks:          # 2) 再按配置的播放设备名
-        if playback_device.lower() in name.lower():
-            return name
+    bt_nodes = _bt_a2dp_sink_node_names()
+    for serial, sname, _, _ in sinks:    # 1) 已连蓝牙优先
+        nn = _sink_node_name(serial)
+        if nn in bt_nodes:
+            return nn
+    for serial, sname, _, _ in sinks:    # 2) 再按配置的播放设备名
+        if playback_name and playback_name.lower() in sname.lower():
+            return _sink_node_name(serial)
     return None
 
 
