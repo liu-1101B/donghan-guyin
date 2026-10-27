@@ -76,7 +76,11 @@ streamlit run guyun_app.py
 
 ---
 
-## 历史音系研究模块\n\n已新增历史时期时间轴、学者体系注册、来源追溯与离线数据查询。当前接入《广韵》音韵地位原始资料、PHONO-ML Baxter–Sagart 风格中古音转写，以及《中原音韵》多个学者方案。查询入口与数据许可说明见 [历史音韵架构](docs/HISTORICAL_PHONOLOGY_ARCHITECTURE.md)、[数据资源总表](docs/HISTORICAL_PHONOLOGY_DATA_CATALOG.md) 和 [数据来源/许可](data/historical/README.md)。这些历史转写默认不被当作 TTS 可直接使用的 IPA。\n\n## 研究边界与证据说明
+## 历史音系研究模块
+
+已新增历史时期时间轴、学者体系注册、来源追溯与离线数据查询。当前接入《广韵》音韵地位原始资料、PHONO-ML Baxter–Sagart 风格中古音转写，以及《中原音韵》多个学者方案。查询入口与数据许可说明见 [历史音韵架构](docs/HISTORICAL_PHONOLOGY_ARCHITECTURE.md)、[数据资源总表](docs/HISTORICAL_PHONOLOGY_DATA_CATALOG.md) 和 [数据来源/许可](data/historical/README.md)。这些历史转写默认不被当作 TTS 可直接使用的 IPA。
+
+## 研究边界与证据说明
 
 本项目是面向演示、探索与教学的实验性原型，**不声称已经完成经过同行评审的“东汉洛阳官音”定论式复原**。
 
@@ -135,7 +139,8 @@ build.bat
 - `language/history/qieyun_data.py`、`phono_ml_data.py`、`zhongyuan_data.py`：三类数据的离线查询适配器。
 - `language/history/provenance.py`：保存来源、版本、条目位置、推导规则与置信度。
 - `guyun_app.py`：页面底部新增「历史音系探索（研究预览）」折叠面板，可按时期、方案和单字查询已接入记录。
-- `scripts/import_sinica_ccr.py`：从三个官方 ZIP 可重复生成有来源元数据的规范化 JSONL 数据包。\n- `tests/test_historical_phonology.py`：测试时期、数据检索、多方案标识、来源追溯及索引查询。
+- `scripts/import_sinica_ccr.py`：从三个官方 ZIP 可重复生成有来源元数据的规范化 JSONL 数据包。
+- `tests/test_historical_phonology.py`：测试时期、数据检索、多方案标识、来源追溯及索引查询。
 - `.github/workflows/historical-phonology-tests.yml`：自动运行 Python 编译检查与历史音系回归测试。
 
 运行测试：
@@ -158,3 +163,8 @@ python -m unittest discover -s tests -p "test_historical_phonology.py" -v
 - [ ] RVC/GPT-SoVITS AI 音色优化
 - [ ] 多音字智能选音
 - [ ] 字源注解
+
+
+### 中央研究院古今音资料库（官方 PDM 下载资料）
+
+已提供专用导入器与查询面板。先下载/获取规范化数据包并解压到 data/historical/sinica_ccr_import/，再启动应用；若目录没有 sinica_ccr_records.jsonl.gz，界面会说明数据包尚未安装。详见 data/historical/README.md。
