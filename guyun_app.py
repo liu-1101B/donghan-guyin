@@ -425,3 +425,114 @@ with st.expander("🧭 历史音系探索（研究预览）", expanded=False):
                     )
                 else:
                     st.info("该字在所选数据集中没有查到记录。")
+
+
+# ===== 中央研究院古今音资料库：独立下载的 PDM 声韵数据 =====
+with st.expander("🏛️ 中央研究院古今音资料库（来源可追溯的原始记录）", expanded=False):
+    from language.history.sinica_ccr_data import (
+        DATA_PATH as SINICA_CCR_DATA_PATH,
+        dataset_available as sinica_ccr_dataset_available,
+        lookup_sinica_ccr_records,
+        sinica_ccr_record_count,
+    )
+
+    st.markdown(
+        "该模块查询中央研究院／台大官方独立下载的声韵资料。每条结果保留原始工作簿、"
+        "工作表、行号、原始字段及 SHA-256。韵部标签、学者转写和拟音是不同数据类型；"
+        "页面不会把韵部标签自动转换成 IPA。"
+    )
+    if not sinica_ccr_dataset_available():
+        st.warning("当前代码已支持查询，但规范化数据文件尚未放入仓库目录。")
+        st.code(
+            "mkdir -p data/historical/sinica_ccr_import\n"
+            "unzip sinica_ccr_import_bundle.zip -d data/historical/sinica_ccr_import",
+            language="bash",
+        )
+        st.markdown(
+            "将本次提供的 sinica_ccr_import_bundle.zip 解压到上述目录后，重新启动页面即可启用。"
+            "完整数据包包含 26 个工作簿、34 个工作表，共 378,214 条数据记录。"
+        )
+        st.markdown(
+            "[官方授权与来源说明](https://xiaoxue.iis.sinica.edu.tw/ccrdata/) · "
+            "[项目数据说明](data/historical/README.md)"
+        )
+    else:
+        package_labels = {
+            "全部数据集": None,
+            "上古音／两汉": "sinica_ccr_old_chinese",
+            "中古时期": "sinica_ccr_middle_chinese",
+            "历代韵书": "sinica_ccr_rhyme_books",
+        }
+        p1, p2 = st.columns(2)
+        with p1:
+            package_label = st.selectbox(
+                "资料包", list(package_labels), key="sinica_ccr_package"
+            )
+        with p2:
+            period_labels = [
+                "全部时期", "先秦", "西汉", "东汉", "魏", "晋",
+                "南北朝", "隋唐", "韵书资料",
+            ]
+            period_label = st.selectbox(
+                "时期／资料类别", period_labels, key="sinica_ccr_period"
+            )
+        workbook_keyword = st.text_input(
+            "学者／韵书名称过滤（可留空）",
+            placeholder="例如：王力、董同龢、廣韻、中原音韻",
+            key="sinica_ccr_workbook_keyword",
+        ).strip()
+        c1, c2 = st.columns([1, 2])
+        with c1:
+            character = st.text_input(
+                "查询单个汉字", value="東", max_chars=1, key="sinica_ccr_character"
+            ).strip()
+        with c2:
+            st.caption(
+                "首次查询会在本机临时目录建立 SQLite 检索索引；原始数据文件不会被修改。"
+            )
+        if st.button("查询古今音资料", key="sinica_ccr_lookup"):
+            if not character:
+                st.warning("请先输入一个汉字。")
+            else:
+                try:
+                    records = lookup_sinica_ccr_records(
+                        character,
+                        dataset_id=package_labels[package_label],
+                        period=None if period_label == "全部时期" else period_label,
+                        workbook_keyword=workbook_keyword or None,
+                        limit=200,
+                    )
+                    if records:
+                        rows = []
+                        for rec in records:
+                            rows.append({
+                                "汉字": rec.character,
+                                "时期": rec.period,
+                                "体系／韵书": rec.system,
+                                "数据类型": rec.record_type,
+                                "原始字段": "；".join(
+                                    f"{key}={value}" for key, value in rec.fields.items()
+                                    if value != ""
+                                ),
+                                "来源工作簿": rec.source_workbook,
+                                "工作表": rec.source_sheet,
+                                "源行号": rec.source_row,
+                                "许可标记": rec.license_mark,
+                                "工作簿 SHA-256": rec.source_workbook_sha256,
+                            })
+                        st.dataframe(rows, use_container_width=True, hide_index=True)
+                        st.caption(
+                            f"显示 {len(records)} 条记录（最多 200 条）。结果按源工作簿、工作表和行号排序；"
+                            "多读与异读均保留。"
+                        )
+                        total_count = sinica_ccr_record_count(
+                            dataset_id=package_labels[package_label]
+                        ) if package_labels[package_label] else sinica_ccr_record_count()
+                        st.markdown(
+                            f"[查看官方资料库]({records[0].source_url}) · "
+                            f"资料包记录总数：{total_count:,}"
+                        )
+                    else:
+                        st.info("该字在当前筛选条件下没有记录。可清除学者／韵书过滤后重试。")
+                except (FileNotFoundError, ValueError) as exc:
+                    st.error(str(exc))
