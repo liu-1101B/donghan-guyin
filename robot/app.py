@@ -93,7 +93,7 @@ _autoreload_changed_modules()
 import yaml
 from robot.session import Session
 from robot.voice_router import VoiceRouter
-from robot.audio_io import AudioIO, bt_status, BT_MAC
+from robot.audio_io import AudioIO, bt_status, BT_MAC, _list_pw_sinks
 from services import tts_client
 from language.ancient_tts import text_to_ipa, synthesize_ancient
 from phonology_db import lookup_char, EASTERN_HAN_DB
@@ -241,9 +241,19 @@ def get_audio_io():
         with open(p, encoding="utf-8") as f:
             cfg = yaml.safe_load(f) or {}
     a = cfg.get("audio", {})
+    # 播放目标 sink（界面选择框持久化）：存**显示名**而非 serial——
+    # serial 每次重启漂移，显示名稳定
+    t = None
+    try:
+        with open(os.path.join(OUT_DIR, "playback_target.txt"),
+                  encoding="utf-8") as f:
+            t = f.read().strip() or None
+    except Exception:
+        t = None
     return AudioIO(capture_device=a.get("capture_device", "plughw:2,0"),
                    playback_device=a.get("playback_device", "plughw:2,0"),
-                   sample_rate=a.get("sample_rate", 16000))
+                   sample_rate=a.get("sample_rate", 16000),
+                   playback_target=t)
 
 
 # 代码重载后必须重建缓存实例：旧实例的方法仍绑定旧类（如旧 Turn 没有
@@ -497,6 +507,34 @@ with col1:
 
     st.button("录音 5 秒", on_click=_mic_record, use_container_width=True,
               help="对麦克风说话 5 秒，本地识别后填入输入框")
+
+    st.markdown('<div class="gi-h">播放设备</div>', unsafe_allow_html=True)
+    # 列出当前在线的 PipeWire 输出；"自动"=跟随系统默认输出。
+    # 选定具体设备 → pw-play --target 定向（不动系统默认，
+    # 也不影响其它程序、不和蓝牙抢默认）。持久化存显示名（serial 会漂移）。
+    _sinks = [(s[1], s[0], s[2]) for s in _list_pw_sinks()]
+    _opts = ["自动（跟随系统默认输出）"] + [s[0] for s in _sinks]
+    try:
+        with open(os.path.join(OUT_DIR, "playback_target.txt"),
+                  encoding="utf-8") as f:
+            _persist = f.read().strip()
+    except Exception:
+        _persist = ""
+    _init_idx = _opts.index(_persist) if _persist in _opts else 0
+    _p = st.selectbox("输出到", _opts, index=_init_idx, key="robot_play_dev",
+                      help="自动：系统默认输出是什么就发到哪。\n"
+                           "选具体设备：固定发到它，不随系统默认变。\n"
+                           "（仅改机器人的定向播放，不动系统默认输出）")
+    _desired = None if _p == _opts[0] else _p
+    _ai = get_audio_io()
+    if _ai.playback_target != _desired:
+        _ai.playback_target = _desired          # 立即对后续播放生效
+        try:                                    # 持久化（None=清空）
+            with open(os.path.join(OUT_DIR, "playback_target.txt"),
+                      "w", encoding="utf-8") as f:
+                f.write(_desired or "")
+        except Exception:
+            pass
 
     st.markdown('<div class="gi-h">语音模式</div>', unsafe_allow_html=True)
     st.radio("模式", ["自然语音", "东汉古音"],

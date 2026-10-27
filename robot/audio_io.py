@@ -88,41 +88,89 @@ def _list_pw_sinks() -> list:
     return sinks
 
 
-def _target_sink(playback_device: str):
-    """决定 pw-play 的目标 sink（serial；None = 跟随 PipeWire 默认输出）。
+def set_pw_default(serial) -> bool:
+    """把某 sink 设为 PipeWire 默认输出（wpctl set-default）。"""
+    try:
+        r = subprocess.run(["wpctl", "set-default", "sink",
+                            str(serial)],
+                           capture_output=True, text=True, timeout=10)
+        return r.returncode == 0
+    except Exception:
+        return False
 
-    本机 Jetson AGX Orin 无内置喇叭：默认输出掉回 Built-in 基本等于
-    "没有真实输出"（蓝牙断开/USB 被切走后系统常这样回落），此时若
-    playback_device（设备名子串）对应的 sink 在线，就定向到它——
-    否则声音发给空接口，"能播"但听不见。
-    默认输出是真实设备（蓝牙/USB/HDMI，用户主动选的）→ 照旧跟随默认，
-    蓝牙 A2DP 流程不受影响。显式 plughw:/hw: 前缀 → 跟随默认
-    （aplay 回退已指定卡）。
+
+def _pw_node_names(mac: str) -> set:
+    """pw-cli 里属性含该 MAC 的节点名集合（蓝牙 sink 精确定位用）。
+
+    bluez A2DP sink 的 node.name 含 MAC（如 bluez_output.F8_D3_...）；
+    节点显示名（如 "BS-32D"）不含 MAC，用显示名匹配会漏。
     """
-    if playback_device.startswith(("plughw:", "hw:", "plug:")):
-        return None
+    def _hex(s):  # 只留 hex，分隔符（:/-_.）不影响匹配
+        return re.sub(r"[^0-9a-f]", "", s.lower())
+    mac_l = _hex(mac)
+    try:
+        out = subprocess.run(["pw-cli", "list-objects"],
+                             capture_output=True, text=True,
+                             timeout=10).stdout
+    except Exception:
+        return set()
+    names = set()
+    for line in out.splitlines():
+        m = re.search(r'node\.name\s*=\s*"([^"]+)"', line)
+        if m and mac_l and mac_l in _hex(m.group(1)):
+            names.add(m.group(1))
+    return names
+
+
+def _target_sink(playback_device: str, target_name=None):
+    """决定 pw-play --target 的取值；None = 跟随 PipeWire 默认输出。
+
+    返回值直接是 pw-play 能认的名字/serial（--target 两者皆可）。
+    target_name（界面选定的 sink 显示名）→ 在线就直接定向它；
+    离线（如蓝牙断开）→ 落到下方 auto 逻辑，不发 Built-in 空接口。
+    target_name=None → 智能跟随：
+      本机 Jetson AGX Orin 无内置喇叭：默认输出掉回 Built-in 基本
+      等于"没有真实输出"（蓝牙断开/USB 被切走后系统常这样回落），
+      此时若 playback_device（设备名子串）对应的 sink 在线，就定向
+      到它——否则声音发给空接口，"能播"但听不见。
+      默认输出是真实设备（蓝牙/USB/HDMI，用户主动选的）→ 跟随默认，
+      蓝牙 A2DP 流程不受影响。显式 plughw:/hw: 前缀 → 跟随默认
+      （aplay 回退已指定卡）。
+    """
     sinks = _list_pw_sinks()
     if not sinks:
+        return None
+    if target_name:
+        names = {name for _, name, _ in sinks}
+        if target_name in names:
+            return target_name
+        # 选定设备离线 → 落到下方 auto 逻辑
+    if playback_device.startswith(("plughw:", "hw:", "plug:")):
         return None
     default = next((s for s in sinks if s[2]), None)
     if not default or not default[1].lower().startswith("built-in"):
         return None
-    for serial, name, _ in sinks:
+    for _, name, _ in sinks:
         if playback_device.lower() in name.lower():
-            return serial
+            return name
     return None
 
 
 class AudioIO:
     def __init__(self, capture_device="plughw:2,0",
                  playback_device="plughw:2,0",
-                 sample_rate=16000):
+                 sample_rate=16000,
+                 playback_target=None):
         # 设备按名字解析成当前卡号：USB 声卡的 ALSA 卡号每次重启
         # 都会漂移（曾 card 2 → 重启后 card 0，录音随即失效）。
         # 配置里给 plughw:/hw:/plug: 前缀时仍按原样用（显式指定）。
         self.capture_device = _resolve_device(capture_device, "capture")
         self.playback_device = _resolve_device(playback_device, "playback")
         self.sample_rate = sample_rate
+        # pw-play 目标 sink 的**显示名**（None="auto" 智能跟随；
+        # 名字比 serial 稳：serial 每次重启漂移）。界面播放设备
+        # 选择框改这里，立即对后续播放生效。
+        self.playback_target = playback_target
         # 播放进程改为**每次播放独立**（存进 _Playback 句柄，不再是
         # 实例共享属性）：旧实现里 play_async 开多个线程共享
         # self._play_proc/self._play_tmp，后一次播放的 stop() 会误杀
@@ -167,7 +215,8 @@ class AudioIO:
         界面按钮请用 play_async()，避免 UI 卡到播完。
         """
         self.stop()
-        pb = _Playback(wav_bytes, self.playback_device)
+        pb = _Playback(wav_bytes, self.playback_device,
+                       self.playback_target)
         self._last_playback = pb
         return pb.wait()
 
@@ -178,7 +227,8 @@ class AudioIO:
         每次播放独立（不干扰彼此）：想同时放两段可以连点，
         想打断当前播放调 stop()。
         """
-        pb = _Playback(wav_bytes, self.playback_device)
+        pb = _Playback(wav_bytes, self.playback_device,
+                       self.playback_target)
         self._last_playback = pb
         t = threading.Thread(target=pb.run, daemon=True)
         t.start()
@@ -207,7 +257,8 @@ class AudioIO:
             # 必须和实际播放同一个目标（_target_sink），否则默认掉回
             # Built-in 时探测的是空接口、真正的目标设备挂死测不出来
             cmd = ["pw-play"]
-            target = _target_sink(self.playback_device)
+            target = _target_sink(self.playback_device,
+                                  self.playback_target)
             if target is not None:
                 cmd += ["--target", str(target)]
             cmd.append(tmp.name)
@@ -250,6 +301,16 @@ class AudioIO:
         if pb:
             pb.cancel()
 
+    def selftest(self, path: str = "audio_out/selftest.wav") -> bool:
+        """录制 2 秒并回放，验证麦克风+扬声器链路"""
+        print("[audio] 自检：请对麦克风说话（2 秒）...")
+        if not self.record(2.0, path):
+            print("[audio] 自检失败：无法录制")
+            return False
+        ok = self.play_file(path)
+        print("[audio] 自检回放完成" if ok else "[audio] 自检回放失败")
+        return ok
+
 
 class _Playback:
     """一次独立播放（线程安全）：pw-play 优先，失败回退 aplay。
@@ -258,15 +319,18 @@ class _Playback:
     cancel() 只影响自己。
     """
 
-    def __init__(self, wav_bytes: bytes, playback_device: str):
+    def __init__(self, wav_bytes: bytes, playback_device: str,
+                 playback_target=None):
         self.wav_bytes = wav_bytes
         self.playback_device = playback_device
+        self.playback_target = playback_target
         self._proc = None
 
     def _pw_cmd(self, path: str) -> list:
         cmd = ["pw-play"]
-        # 默认输出掉回 Built-in（无物理输出）时定向到配置设备
-        target = _target_sink(self.playback_device)
+        # 定向：界面选定的 sink 优先；未选（auto）时默认掉回
+        # Built-in（无物理输出）则定向到配置设备
+        target = _target_sink(self.playback_device, self.playback_target)
         if target is not None:
             cmd += ["--target", str(target)]
         cmd.append(path)
@@ -395,25 +459,24 @@ def bt_status(mac: str = BT_MAC) -> dict:
     default_id = None
     for line in block.splitlines():
         m = re.search(r"(\*?)\s*(\d+)\.\s+(.+?)\s+\[vol:", line)
-        if not m:
-            continue
-        is_def, sid, sname = (m.group(1) == "*", int(m.group(2)),
-                              m.group(3).strip())
-        if is_def:
-            default_id = sid
-        if out["sink_id"] is None and out["bt_name"] in sname:
-            out["sink_id"], out["sink_name"] = sid, sname
+        if m and m.group(1) == "*":
+            default_id = int(m.group(2))
+    # sink 按 node.name 里的 MAC 精确定位（显示名不含 MAC：实测该设备
+    # 显示名是 "BS-32D" 而非蓝牙名，按 bt_name 子串匹配会漏）
+    bt_nodes = _pw_node_names(mac)
+    for serial, sname, _ in _list_pw_sinks():
+        info = None
+        try:
+            info = subprocess.run(["wpctl", "inspect", str(serial)],
+                                  capture_output=True, text=True,
+                                  timeout=10).stdout
+        except Exception:
+            pass
+        if info and re.search(r'node\.name\s*=\s*"([^"]+)"', info):
+            node = re.search(r'node\.name\s*=\s*"([^"]+)"', info).group(1)
+            if node in bt_nodes:
+                out["sink_id"], out["sink_name"] = serial, sname
+                break
     out["is_default"] = (out["sink_id"] is not None
                          and default_id == out["sink_id"])
     return out
-
-    # ---------- 自检 ----------
-    def selftest(self, path: str = "audio_out/selftest.wav") -> bool:
-        """录制 2 秒并回放，验证麦克风+扬声器链路"""
-        print("[audio] 自检：请对麦克风说话（2 秒）...")
-        if not self.record(2.0, path):
-            print("[audio] 自检失败：无法录制")
-            return False
-        ok = self.play_file(path)
-        print("[audio] 自检回放完成" if ok else "[audio] 自检回放失败")
-        return ok
