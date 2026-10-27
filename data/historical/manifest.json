@@ -50,27 +50,50 @@
       "title": "中央研究院／臺大汉字古今音资料库：上古音",
       "url": "https://xiaoxue.iis.sinica.edu.tw/ccrdata/file/ccr01_shangguyin_data_xlsx.zip",
       "license_mark": "PDM",
-      "status": "license_checked_waiting_for_archive_inspection",
+      "status": "archive_inspected_normalized_bundle_prepared_payload_not_yet_in_git",
       "scope": "先秦学者体系、西汉、东汉",
-      "note": "官方授权页说明独立下载声韵文件可在法律允许范围内视为无著作权利限制；尚未导入。"
+      "note": "官方 ZIP 已检查并转为可追溯 JSONL 规范化包；查询适配器已推送，数据载荷仍需放入 data/historical/sinica_ccr_import/。",
+      "records": 56169
     },
     {
       "id": "sinica_ccr_middle_chinese",
       "title": "中央研究院／臺大汉字古今音资料库：中古音",
       "url": "https://xiaoxue.iis.sinica.edu.tw/ccrdata/file/ccr02_zhongguyin_data_xlsx.zip",
       "license_mark": "PDM",
-      "status": "license_checked_waiting_for_archive_inspection",
+      "status": "archive_inspected_normalized_bundle_prepared_payload_not_yet_in_git",
       "scope": "南北朝至隋唐多体系",
-      "note": "尚未导入；需检查工作簿和字段。"
+      "note": "官方 ZIP 已检查并转为可追溯 JSONL 规范化包；查询适配器已推送，数据载荷仍需放入 data/historical/sinica_ccr_import/。",
+      "records": 155759
     },
     {
       "id": "sinica_ccr_rhyme_books",
       "title": "中央研究院／臺大汉字古今音资料库：韵书",
       "url": "https://xiaoxue.iis.sinica.edu.tw/ccrdata/file/ccr03_yunshu_data_xlsx.zip",
       "license_mark": "PDM",
-      "status": "license_checked_waiting_for_archive_inspection",
+      "status": "archive_inspected_normalized_bundle_prepared_payload_not_yet_in_git",
       "scope": "广韵、集韵、中原音韵、洪武正韵等",
-      "note": "尚未导入；需检查工作簿和字段。"
+      "note": "官方 ZIP 已检查并转为可追溯 JSONL 规范化包；查询适配器已推送，数据载荷仍需放入 data/historical/sinica_ccr_import/。",
+      "records": 166286
     }
-  ]
+  ],
+  "prepared_normalized_bundle": {
+    "status": "prepared_as_conversation_attachment_payload_not_committed_to_repository",
+    "expected_repository_path": "data/historical/sinica_ccr_import/sinica_ccr_records.jsonl.gz",
+    "bundle_filename": "sinica_ccr_import_bundle.zip",
+    "bundle_sha256": "d49256dc9a36fdb99f4368b097472caa8a3a4b53419aaa00a285143749d7d8d8",
+    "normalized_file_sha256": "395a7e81527e66a3a1ad5fd384f9e94f41dd03b315476ea0a8d2e08c8adae5e7",
+    "total_workbooks": 26,
+    "total_sheets": 34,
+    "total_records": 378214,
+    "package_record_counts": {
+      "sinica_ccr_old_chinese": 56169,
+      "sinica_ccr_middle_chinese": 155759,
+      "sinica_ccr_rhyme_books": 166286
+    },
+    "source_archive_sha256": {
+      "ccr01_shangguyin_data_xlsx": "4d23f2961704e7219deee67d66bcc45e40cb177e3488a7ca1281d271cc408f4f",
+      "ccr02_zhongguyin_data_xlsx": "f6c4599307fa5f048e821ff20bd574cdf752b3c791d3046772e71c299816486e",
+      "ccr03_yunshu_data_xlsx": "055dfcf3fb55c83257372bc900f42722c32cc7c24ce397c17ce10a5e51f19b01"
+    }
+  }
 }
