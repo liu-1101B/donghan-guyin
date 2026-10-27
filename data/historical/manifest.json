@@ -43,5 +43,34 @@
       ],
       "tts_ready": false
     }
+  ],
+  "candidate_sources": [
+    {
+      "id": "sinica_ccr_old_chinese",
+      "title": "中央研究院／臺大汉字古今音资料库：上古音",
+      "url": "https://xiaoxue.iis.sinica.edu.tw/ccrdata/file/ccr01_shangguyin_data_xlsx.zip",
+      "license_mark": "PDM",
+      "status": "license_checked_waiting_for_archive_inspection",
+      "scope": "先秦学者体系、西汉、东汉",
+      "note": "官方授权页说明独立下载声韵文件可在法律允许范围内视为无著作权利限制；尚未导入。"
+    },
+    {
+      "id": "sinica_ccr_middle_chinese",
+      "title": "中央研究院／臺大汉字古今音资料库：中古音",
+      "url": "https://xiaoxue.iis.sinica.edu.tw/ccrdata/file/ccr02_zhongguyin_data_xlsx.zip",
+      "license_mark": "PDM",
+      "status": "license_checked_waiting_for_archive_inspection",
+      "scope": "南北朝至隋唐多体系",
+      "note": "尚未导入；需检查工作簿和字段。"
+    },
+    {
+      "id": "sinica_ccr_rhyme_books",
+      "title": "中央研究院／臺大汉字古今音资料库：韵书",
+      "url": "https://xiaoxue.iis.sinica.edu.tw/ccrdata/file/ccr03_yunshu_data_xlsx.zip",
+      "license_mark": "PDM",
+      "status": "license_checked_waiting_for_archive_inspection",
+      "scope": "广韵、集韵、中原音韵、洪武正韵等",
+      "note": "尚未导入；需检查工作簿和字段。"
+    }
   ]
 }
