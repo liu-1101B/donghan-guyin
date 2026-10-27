@@ -8,7 +8,8 @@ from language.history import (TIMELINE, get_period, get_system, lookup_reading,
                               lookup_qieyun_positions, period_at,
                               qieyun_record_count, systems_for_period,
                               lookup_phono_ml, phono_ml_record_count,
-                              lookup_zhongyuan, zhongyuan_record_count,\n                              dataset_available, lookup_sinica_ccr_records,\n                              sinica_ccr_record_count, sinica_ccr_package_counts)
+                              lookup_zhongyuan, zhongyuan_record_count,
+                              dataset_available, lookup_sinica_ccr_records,\n                              sinica_ccr_record_count, sinica_ccr_package_counts)
 
 
 class TimelineTests(unittest.TestCase):
