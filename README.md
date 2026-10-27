@@ -115,26 +115,39 @@ build.bat
 
 ---
 
-## 历史音韵平台基础层（开发中）
+## 历史音系探索平台（开发分支）
 
-新分支 `feat/historical-phonology-foundation` 将项目扩展为“历史时期 × 拟音体系 × 逐字读音”的可追溯架构。
+分支 `feat/historical-phonology-foundation` 将项目扩展为“历史时期 × 拟音体系 × 逐字读音”的可追溯研究原型。
 
-- `language/history/timeline.py`：历史时期导航范围与年份查询，允许时期重叠。
-- `language/history/systems.py`：拟音体系注册表，区分已接入数据与仅登记元数据。
+### 当前已接入的数据
+
+- **《广韵》音韵地位**：小韵首字、反切上下字、音韵地位原始描述；CC0-1.0。
+- **PHONO-ML**：Baxter–Sagart 风格中古音转写，约 20,276 个不同汉字、26,224 组字音对应关系；CC BY 4.0，署名说明见 `data/historical/PHONO-ML_ATTRIBUTION.md`。
+- **《中原音韵》**：5,877 条数据记录，按杨耐思、宁继福、薛凤生、unt 等方案分别查询；CC0-1.0。
+
+每份快照都有来源链接、上游 Git Blob SHA、数据类型和许可信息，详见 [数据来源/许可](data/historical/README.md)、[机器可读清单](data/historical/manifest.json) 和 [数据资源总表](docs/HISTORICAL_PHONOLOGY_DATA_CATALOG.md)。
+
+### 代码与界面
+
+- `language/history/timeline.py`：历史时期导航范围与年份查询；允许时期重叠。
+- `language/history/systems.py`：注册不同历史时期与拟音方案，区分已接入数据和仅登记元数据。
 - `language/history/reconstruction.py`：统一逐字查询；未接入的数据不会被猜测或伪装成真实读音。
-- `language/history/qieyun_data.py`：离线查询《广韵》反切音韵地位表，保留同字多条记录。
-- `data/historical/guangyun_positions.csv`：随仓库提供的 CC0 数据副本；来源、许可和上游 blob SHA 见 `data/historical/README.md`。
-- `language/history/provenance.py`：记录来源、版本、条目位置、推导规则与置信度。
-- `docs/HISTORICAL_PHONOLOGY_ARCHITECTURE.md`：数据模型、学术边界与后续路线。
-- `tests/test_historical_phonology.py`：覆盖时期、体系、数据查询和缺失读音处理。
-
-**当前数据状态：**《广韵》表已接入，可查询小韵首字、反切上下字及原始音韵地位描述。这是中古音韵资料记录，不是 IPA，也不是某位学者的完整拟音方案。高本汉、王力等体系目前仍是元数据登记，尚未导入其完整逐字拟音。东汉旧字表继续标记为实验性方案；时间轴控件尚未接入现有界面。
+- `language/history/qieyun_data.py`、`phono_ml_data.py`、`zhongyuan_data.py`：三类数据的离线查询适配器。
+- `language/history/provenance.py`：保存来源、版本、条目位置、推导规则与置信度。
+- `guyun_app.py`：页面底部新增「历史音系探索（研究预览）」折叠面板，可按时期、方案和单字查询已接入记录。
+- `tests/test_historical_phonology.py`：测试时期、数据检索、多方案标识、来源追溯及“无 IPA 不伪装成可合成”。
+- `.github/workflows/historical-phonology-tests.yml`：自动运行 Python 编译检查与历史音系回归测试。
 
 运行测试：
 
 ```bash
-python -m unittest discover -s tests -p "test_historical_phonology.py"
+python -m compileall -q language/history guyun_app.py
+python -m unittest discover -s tests -p "test_historical_phonology.py" -v
 ```
+
+### 学术边界
+
+《广韵》音韵地位、PHONO-ML 转写、《中原音韵》各家重构和项目旧东汉实验字表不是同一种数据。历史转写默认存放于 `Reading.transcription`，不冒充 IPA，也不承诺能直接交给 eSpeak-ng 或其他 TTS。现有 703 字东汉表仍是实验性拟音；要建立可信的东汉洛阳音方案，还需要逐条补齐证据来源、推导规则并进行学术核验。
 
 ---
 
