@@ -68,7 +68,7 @@ def infer(package_id, workbook, sheet):
   elif "西漢" in workbook: period="西汉"; system="韵部资料"; kind="historical_rhyme_group"
   elif "東漢" in workbook: period="东汉"; system="韵部资料"; kind="historical_rhyme_group"
  elif package_id=="sinica_ccr_middle_chinese":
-  period=next((p for token,p in [("魏","魏"),("晉","晋"),("南北朝","南北朝"),("隋唐","隋唐")] if token in workbook),"")
+  period=next((p for token,p in [("南北朝","南北朝"),("隋唐","隋唐"),("晉","晋"),("魏","魏")] if token in workbook),"")
   if "_擬音_" in workbook: system=workbook.split("_擬音_",1)[-1].rsplit(".",1)[0]; kind="scholar_reconstruction"
   else: system="时代韵部资料"; kind="historical_rhyme_group"
  else:
