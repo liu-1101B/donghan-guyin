@@ -179,6 +179,28 @@ def ensure_audible(playback_device, target_name=None):
     return None
 
 
+def _bt_a2dp_sink_names() -> set:
+    """当前在线的蓝牙 A2DP sink 显示名集合。
+
+    bluez A2DP sink 的 node.name 形如 `bluez_output.<MAC下划线>`，
+    以此识别"这是蓝牙音箱/耳机"（区别于 USB 声卡 / 内置）。
+    用于自动模式：系统默认掉回 Built-in（无物理输出）时，
+    若你主动连了蓝牙，声音就该走蓝牙，而不是转去 USB。
+    """
+    names = set()
+    for serial, sname, _, _ in _list_pw_sinks():
+        try:
+            info = subprocess.run(["wpctl", "inspect", str(serial)],
+                                  capture_output=True, text=True,
+                                  timeout=10).stdout
+        except Exception:
+            continue
+        m = re.search(r'node\.name\s*=\s*"([^"]+)"', info)
+        if m and "bluez_output." in m.group(1):
+            names.add(sname)
+    return names
+
+
 def _target_sink(playback_device: str, target_name=None):
     """决定 pw-play --target 的取值；None = 跟随 PipeWire 默认输出。
 
@@ -187,9 +209,11 @@ def _target_sink(playback_device: str, target_name=None):
     离线（如蓝牙断开）→ 落到下方 auto 逻辑，不发 Built-in 空接口。
     target_name=None → 智能跟随：
       本机 Jetson AGX Orin 无内置喇叭：默认输出掉回 Built-in 基本
-      等于"没有真实输出"（蓝牙断开/USB 被切走后系统常这样回落），
-      此时若 playback_device（设备名子串）对应的 sink 在线，就定向
-      到它——否则声音发给空接口，"能播"但听不见。
+      等于"没有真实输出"（蓝牙断开/USB 被切走后系统常这样回落）。
+      此时按优先级定向，否则声音发给空接口，"能播"但听不见：
+        1) 已连接的蓝牙 A2DP sink（你主动连了耳机/音箱就给它——
+           优先级最高，因为"刚连上的蓝牙"几乎总是用户想要的）
+        2) playback_device（设备名子串）对应的 sink（如 USB 声卡）
       默认输出是真实设备（蓝牙/USB/HDMI，用户主动选的）→ 跟随默认，
       蓝牙 A2DP 流程不受影响。显式 plughw:/hw: 前缀 → 跟随默认
       （aplay 回退已指定卡）。
@@ -207,7 +231,12 @@ def _target_sink(playback_device: str, target_name=None):
     default = next((s for s in sinks if s[2]), None)
     if not default or not default[1].lower().startswith("built-in"):
         return None
-    for _, name, _, _ in sinks:
+    # 默认掉回 Built-in（无物理输出）→ 定向到真实设备
+    bt_names = _bt_a2dp_sink_names()
+    for _, name, _, _ in sinks:          # 1) 已连蓝牙优先
+        if name in bt_names:
+            return name
+    for _, name, _, _ in sinks:          # 2) 再按配置的播放设备名
         if playback_device.lower() in name.lower():
             return name
     return None
@@ -223,6 +252,12 @@ class AudioIO:
         # 配置里给 plughw:/hw:/plug: 前缀时仍按原样用（显式指定）。
         self.capture_device = _resolve_device(capture_device, "capture")
         self.playback_device = _resolve_device(playback_device, "playback")
+        # **原始设备名**（如 "USB Audio"）：智能定向（_target_sink）靠
+        # 名字子串匹配 PipeWire sink 显示名，必须用原始名；解析后的
+        # plughw:C,D 会让 _target_sink 误判为"显式指定卡"而直接跟随
+        # 默认（10/27 根因：自动重定向因此从未生效，默认掉回 Built-in
+        # 时纯无声）。plughw 只留给 aplay 回退用。
+        self.playback_name = playback_device
         self.sample_rate = sample_rate
         # pw-play 目标 sink 的**显示名**（None="auto" 智能跟随；
         # 名字比 serial 稳：serial 每次重启漂移）。界面播放设备
@@ -273,7 +308,7 @@ class AudioIO:
         """
         self.stop()
         pb = _Playback(wav_bytes, self.playback_device,
-                       self.playback_target)
+                       self.playback_target, self.playback_name)
         self._last_playback = pb
         return pb.wait()
 
@@ -285,7 +320,7 @@ class AudioIO:
         想打断当前播放调 stop()。
         """
         pb = _Playback(wav_bytes, self.playback_device,
-                       self.playback_target)
+                       self.playback_target, self.playback_name)
         self._last_playback = pb
         t = threading.Thread(target=pb.run, daemon=True)
         t.start()
@@ -314,7 +349,7 @@ class AudioIO:
             # 必须和实际播放同一个目标（_target_sink），否则默认掉回
             # Built-in 时探测的是空接口、真正的目标设备挂死测不出来
             cmd = ["pw-play"]
-            target = _target_sink(self.playback_device,
+            target = _target_sink(self.playback_name,
                                   self.playback_target)
             if target is not None:
                 cmd += ["--target", str(target)]
@@ -377,17 +412,19 @@ class _Playback:
     """
 
     def __init__(self, wav_bytes: bytes, playback_device: str,
-                 playback_target=None):
+                 playback_target=None, playback_name=None):
         self.wav_bytes = wav_bytes
-        self.playback_device = playback_device
+        self.playback_device = playback_device      # plughw（aplay 回退用）
         self.playback_target = playback_target
+        # 原始设备名：pw-play 智能定向用（_target_sink 靠名字匹配 sink）
+        self.playback_name = playback_name or playback_device
         self._proc = None
 
     def _pw_cmd(self, path: str) -> list:
         cmd = ["pw-play"]
         # 定向：界面选定的 sink 优先；未选（auto）时默认掉回
-        # Built-in（无物理输出）则定向到配置设备
-        target = _target_sink(self.playback_device, self.playback_target)
+        # Built-in（无物理输出）→ 已连蓝牙优先，其次配置设备
+        target = _target_sink(self.playback_name, self.playback_target)
         if target is not None:
             cmd += ["--target", str(target)]
         cmd.append(path)
@@ -521,7 +558,7 @@ def bt_status(mac: str = BT_MAC) -> dict:
     # sink 按 node.name 里的 MAC 精确定位（显示名不含 MAC：实测该设备
     # 显示名是 "BS-32D" 而非蓝牙名，按 bt_name 子串匹配会漏）
     bt_nodes = _pw_node_names(mac)
-    for serial, sname, _ in _list_pw_sinks():
+    for serial, sname, _, _ in _list_pw_sinks():
         info = None
         try:
             info = subprocess.run(["wpctl", "inspect", str(serial)],

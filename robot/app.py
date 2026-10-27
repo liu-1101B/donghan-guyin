@@ -205,9 +205,11 @@ def _gen_worker(job, session, cfg):
             else:
                 job["play_ok"] = None
                 job["vol_note"] = None
-        except Exception:
+        except Exception as e:
+            # 不再静默吞异常：把原因带到 play_note，否则用户只看到
+            # "没声音"却无从排查（10/27 解包 bug 就是这样被藏的）
             job["play_ok"] = False
-            job["vol_note"] = None
+            job["vol_note"] = f"自动朗读出错：{e}"
         # 朗读就绪标记：fragment 以此为"整轮完成"信号落盘
         # （避免先落盘后朗读，导致 play_note 永远取不到值）
         job["play_done"] = True
@@ -325,7 +327,7 @@ def _ensure_playable(ai, spinner=True):
     vol_note 非空 = 本次播放前动过/发现音量问题，供 play_note 展示。
     spinner=False 用于自动朗读路径（避免每次生成都闪转圈）。
     """
-    vol_note = ensure_audible(ai.playback_device, ai.playback_target)
+    vol_note = ensure_audible(ai.playback_name, ai.playback_target)
     s = bt_status(BT_MAC)
     if not s["is_default"]:
         # 默认输出不是蓝牙（用户切到 USB/内置等，或蓝牙未连）：
