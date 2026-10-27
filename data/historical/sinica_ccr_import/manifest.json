@@ -1,0 +1,647 @@
+{
+  "schema_version": 1,
+  "source_title": "台湾中央研究院／台大汉字古今音资料库官方独立下载声韵资料",
+  "source_landing_page": "https://xiaoxue.iis.sinica.edu.tw/ccrdata/",
+  "license_mark": "PDM",
+  "license_note": "官方网页对独立下载声韵文件标示 PDM，并将其与在线数据库汇编整体区分。",
+  "normalization_note": "原始字段和值以字符串保留；period/system/record_type 是基于文件名的导航元数据。",
+  "dataset_file": "sinica_ccr_records.jsonl.gz",
+  "packages": [
+    {
+      "id": "sinica_ccr_old_chinese",
+      "archive_name": "ccr01_shangguyin_data_xlsx.zip",
+      "archive_sha256": "4d23f2961704e7219deee67d66bcc45e40cb177e3488a7ca1281d271cc408f4f",
+      "source_url": "https://xiaoxue.iis.sinica.edu.tw/ccrdata/file/ccr01_shangguyin_data_xlsx.zip",
+      "scope": "上古音／两汉",
+      "license_mark": "PDM",
+      "workbooks": [
+        {
+          "name": "001 先秦_高本漢系統.xlsx",
+          "sha256": "a0cea6199c829774dfd5d8520af8096e0da2fa6447cd29f4381f2bef84d92b67",
+          "sheets": [
+            {
+              "name": "_001_先秦_高本漢系統",
+              "headers": [
+                "字號",
+                "字",
+                "聲母",
+                "韻母",
+                "備註"
+              ],
+              "data_rows": 7527,
+              "rows_with_no_character": 0
+            }
+          ]
+        },
+        {
+          "name": "002 先秦_王力系統.xlsx",
+          "sha256": "8f514647dbbbee835f32853398a940769bf3786d692ba8cdffae5e7cb69f27c0",
+          "sheets": [
+            {
+              "name": "_002_先秦_王力系統",
+              "headers": [
+                "字號",
+                "字",
+                "韻部",
+                "聲母",
+                "韻母",
+                "備註"
+              ],
+              "data_rows": 6964,
+              "rows_with_no_character": 0
+            }
+          ]
+        },
+        {
+          "name": "003 先秦_董同龢系統.xlsx",
+          "sha256": "ab1cf8eddf9d483930e1144a6021c53ebe6e953111af177751c7a6d0afc28d43",
+          "sheets": [
+            {
+              "name": "_003_先秦_董同龢系統",
+              "headers": [
+                "字號",
+                "字",
+                "韻部",
+                "聲母",
+                "韻母",
+                "備註"
+              ],
+              "data_rows": 11124,
+              "rows_with_no_character": 0
+            }
+          ]
+        },
+        {
+          "name": "004 先秦_周法高系統.xlsx",
+          "sha256": "3cd0ccbe2d0f64bc364dfdf6642bc778d82c28ebb3271129fd8953b80bdd09e4",
+          "sheets": [
+            {
+              "name": "_004_先秦_周法高系統",
+              "headers": [
+                "字號",
+                "字",
+                "韻部",
+                "聲母",
+                "韻母",
+                "備註"
+              ],
+              "data_rows": 12862,
+              "rows_with_no_character": 0
+            }
+          ]
+        },
+        {
+          "name": "005 先秦_李方桂系統.xlsx",
+          "sha256": "d09ea2240141008d4f7ba67b64d4e4ce5734488ad9348d5f78db2751f66da19e",
+          "sheets": [
+            {
+              "name": "_005_先秦_李方桂系統",
+              "headers": [
+                "字號",
+                "字",
+                "韻部",
+                "聲母",
+                "韻母",
+                "備註"
+              ],
+              "data_rows": 11167,
+              "rows_with_no_character": 0
+            }
+          ]
+        },
+        {
+          "name": "006 兩漢_西漢.xlsx",
+          "sha256": "3ab2cbe6c8c7d7a3abc58fd37851be6e25eebd07b2c3069b00c7c9c207215fea",
+          "sheets": [
+            {
+              "name": "_006_兩漢_西漢",
+              "headers": [
+                "字號",
+                "字",
+                "韻部",
+                "備註"
+              ],
+              "data_rows": 3146,
+              "rows_with_no_character": 0
+            }
+          ]
+        },
+        {
+          "name": "007 兩漢_東漢.xlsx",
+          "sha256": "a2ef11b912b71a547718c8cee37fa337197b8afbe20a4a9ffcb7ea0d3c82d5e2",
+          "sheets": [
+            {
+              "name": "_007_兩漢_東漢",
+              "headers": [
+                "字號",
+                "字",
+                "韻部",
+                "備註"
+              ],
+              "data_rows": 3379,
+              "rows_with_no_character": 0
+            }
+          ]
+        }
+      ],
+      "workbook_count": 7,
+      "data_row_count": 56169
+    },
+    {
+      "id": "sinica_ccr_middle_chinese",
+      "archive_name": "ccr02_zhongguyin_data_xlsx.zip",
+      "archive_sha256": "f6c4599307fa5f048e821ff20bd574cdf752b3c791d3046772e71c299816486e",
+      "source_url": "https://xiaoxue.iis.sinica.edu.tw/ccrdata/file/ccr02_zhongguyin_data_xlsx.zip",
+      "scope": "魏晋南北朝至隋唐",
+      "license_mark": "PDM",
+      "workbooks": [
+        {
+          "name": "008 魏.xlsx",
+          "sha256": "ee98dbd26873a3ac9b9ca59ec6da191fcd6a4aad65cc06c69bdec4f93d16f1cd",
+          "sheets": [
+            {
+              "name": "_008_魏",
+              "headers": [
+                "字號",
+                "字",
+                "韻部",
+                "備註"
+              ],
+              "data_rows": 4158,
+              "rows_with_no_character": 0
+            }
+          ]
+        },
+        {
+          "name": "009 晉.xlsx",
+          "sha256": "24df53307cdc2fc1566015e9a9e09a41722ec3e408cabe0117552c10c5a6ae6f",
+          "sheets": [
+            {
+              "name": "_009_晉",
+              "headers": [
+                "字號",
+                "字",
+                "韻部",
+                "備註"
+              ],
+              "data_rows": 4288,
+              "rows_with_no_character": 0
+            }
+          ]
+        },
+        {
+          "name": "010 南北朝_宋北魏前期.xlsx",
+          "sha256": "83ee485956777cfb13a5d2d851a2bfc2f08487aac25f5425b801cf31781f4347",
+          "sheets": [
+            {
+              "name": "_010_南北朝_宋北魏前期",
+              "headers": [
+                "字號",
+                "字",
+                "韻部",
+                "備註"
+              ],
+              "data_rows": 3732,
+              "rows_with_no_character": 0
+            }
+          ]
+        },
+        {
+          "name": "011 南北朝_北魏後期北齊.xlsx",
+          "sha256": "1c0188c0fa0d01fb97d165193eb1d317070465a0c097983366998dac486a019b",
+          "sheets": [
+            {
+              "name": "_011_南北朝_北魏後期北齊",
+              "headers": [
+                "字號",
+                "字",
+                "韻部",
+                "備註"
+              ],
+              "data_rows": 3880,
+              "rows_with_no_character": 0
+            }
+          ]
+        },
+        {
+          "name": "012 南北朝_齊梁陳北周隋.xlsx",
+          "sha256": "2e29eaecca4b5d759038e7f88509b26c114fbf1541e3bf6e39065c46a248688c",
+          "sheets": [
+            {
+              "name": "_012_南北朝_齊梁陳北周隋",
+              "headers": [
+                "字號",
+                "字",
+                "韻部",
+                "備註"
+              ],
+              "data_rows": 4490,
+              "rows_with_no_character": 0
+            }
+          ]
+        },
+        {
+          "name": "013 隋唐_擬音_高本漢系統.xlsx",
+          "sha256": "4b01a94ee78077548f0022511a4f8c68636fa0707ccb2d6ddc1cd26a10a314ee",
+          "sheets": [
+            {
+              "name": "_013_隋唐_擬音_高本漢系統",
+              "headers": [
+                "字號",
+                "字",
+                "聲母",
+                "韻母",
+                "備註"
+              ],
+              "data_rows": 7685,
+              "rows_with_no_character": 0
+            }
+          ]
+        },
+        {
+          "name": "014 隋唐_擬音_王力系統.xlsx",
+          "sha256": "70378a9f80e23ed04a38b655b3d4b552d8edd0f450dda396dc89401d1378c8e5",
+          "sheets": [
+            {
+              "name": "_014_隋唐_擬音_王力系統",
+              "headers": [
+                "字號",
+                "字",
+                "聲母",
+                "韻母",
+                "備註"
+              ],
+              "data_rows": 25521,
+              "rows_with_no_character": 0
+            }
+          ]
+        },
+        {
+          "name": "015 隋唐_擬音_董同龢系統.xlsx",
+          "sha256": "b9c7bc9596aea3c6a5c4662682e37f7d4bad78129413942e45a36ec209d68f46",
+          "sheets": [
+            {
+              "name": "_015_隋唐_擬音_董同龢系統",
+              "headers": [
+                "字號",
+                "字",
+                "聲母",
+                "韻母",
+                "備註"
+              ],
+              "data_rows": 25528,
+              "rows_with_no_character": 0
+            }
+          ]
+        },
+        {
+          "name": "016 隋唐_擬音_周法高系統.xlsx",
+          "sha256": "f18a40d6ae1a23a74a6f00444fca8ef8b2e49fa235c6acdecaf5101622f5a1d9",
+          "sheets": [
+            {
+              "name": "_016_隋唐_擬音_周法高系統",
+              "headers": [
+                "字號",
+                "字",
+                "聲母",
+                "韻母",
+                "備註"
+              ],
+              "data_rows": 25528,
+              "rows_with_no_character": 0
+            }
+          ]
+        },
+        {
+          "name": "017 隋唐_擬音_李方桂系統.xlsx",
+          "sha256": "052a72eb1138e6a1128e76be67c8348a4e611ffbe1b949cf0cade347af04473b",
+          "sheets": [
+            {
+              "name": "_017_隋唐_擬音_李方桂系統",
+              "headers": [
+                "字號",
+                "字",
+                "聲母",
+                "韻母",
+                "備註"
+              ],
+              "data_rows": 25528,
+              "rows_with_no_character": 0
+            }
+          ]
+        },
+        {
+          "name": "018 隋唐_擬音_陳新雄系統.xlsx",
+          "sha256": "b1e15ceb63cccfaa504dda6ec7aabf326e84b8a2cb49d474ade2a989b4ccca95",
+          "sheets": [
+            {
+              "name": "_018_隋唐_擬音_陳新雄系統",
+              "headers": [
+                "字號",
+                "字",
+                "聲母",
+                "韻母",
+                "備註"
+              ],
+              "data_rows": 25421,
+              "rows_with_no_character": 0
+            }
+          ]
+        }
+      ],
+      "workbook_count": 11,
+      "data_row_count": 155759
+    },
+    {
+      "id": "sinica_ccr_rhyme_books",
+      "archive_name": "ccr03_yunshu_data_xlsx.zip",
+      "archive_sha256": "055dfcf3fb55c83257372bc900f42722c32cc7c24ce397c17ce10a5e51f19b01",
+      "source_url": "https://xiaoxue.iis.sinica.edu.tw/ccrdata/file/ccr03_yunshu_data_xlsx.zip",
+      "scope": "历代韵书",
+      "license_mark": "PDM",
+      "workbooks": [
+        {
+          "name": "019 韻書_切韻.xlsx",
+          "sha256": "a7fd8ce62e0308e83c8c7cbf28f92f526187360a3131d4111677a08ed1fc3cd4",
+          "sheets": [
+            {
+              "name": "01_切韻",
+              "headers": [
+                "字號",
+                "字",
+                "攝",
+                "聲調",
+                "韻目",
+                "字母",
+                "開合",
+                "等第",
+                "清濁",
+                "上字",
+                "下字"
+              ],
+              "data_rows": 994,
+              "rows_with_no_character": 0
+            },
+            {
+              "name": "02 又切",
+              "headers": [
+                "字號",
+                "字",
+                "上字",
+                "下字"
+              ],
+              "data_rows": 163,
+              "rows_with_no_character": 0
+            }
+          ]
+        },
+        {
+          "name": "020 韻書_廣韻.xlsx",
+          "sha256": "a911b9ba636b634348b5b2067bc95e9b9d43c346fc50a0b621a07ccafe9f0496",
+          "sheets": [
+            {
+              "name": "01 廣韻",
+              "headers": [
+                "字號",
+                "字",
+                "攝",
+                "聲調",
+                "韻目",
+                "字母",
+                "開合",
+                "等第",
+                "清濁",
+                "上字",
+                "下字"
+              ],
+              "data_rows": 25528,
+              "rows_with_no_character": 0
+            },
+            {
+              "name": "02 又音",
+              "headers": [
+                "字號",
+                "字",
+                "音"
+              ],
+              "data_rows": 1408,
+              "rows_with_no_character": 0
+            },
+            {
+              "name": "03_又切",
+              "headers": [
+                "字號",
+                "字",
+                "上字",
+                "下字"
+              ],
+              "data_rows": 14060,
+              "rows_with_no_character": 0
+            },
+            {
+              "name": "04_校勘",
+              "headers": [
+                "字號",
+                "字",
+                "攝",
+                "聲調",
+                "韻目",
+                "字母",
+                "開合",
+                "等第",
+                "清濁",
+                "上字",
+                "下字"
+              ],
+              "data_rows": 548,
+              "rows_with_no_character": 0
+            }
+          ]
+        },
+        {
+          "name": "021 韻書_集韻.xlsx",
+          "sha256": "c37f2ec1c607986bddf1f0f09dfde37dfd5942a834616141c4981721e14dfe55",
+          "sheets": [
+            {
+              "name": "01 集韻",
+              "headers": [
+                "字號",
+                "字",
+                "聲調",
+                "韻目",
+                "攝",
+                "上字",
+                "下字",
+                "白滌州39聲類",
+                "邵榮芬40聲類",
+                "清濁",
+                "開合",
+                "等第",
+                "卲榮芬聲母擬音",
+                "邵榮芬韻母擬音",
+                "釋義"
+              ],
+              "data_rows": 51377,
+              "rows_with_no_character": 0
+            },
+            {
+              "name": "02 校勘",
+              "headers": [
+                "字號",
+                "字",
+                "韻目",
+                "上字",
+                "下字"
+              ],
+              "data_rows": 4044,
+              "rows_with_no_character": 0
+            }
+          ]
+        },
+        {
+          "name": "022 韻書_附釋文互註禮部韻略.xlsx",
+          "sha256": "eb44ef8771219f35af6538d699c6b5b10f2330802d22831bf4239bac21f104de",
+          "sheets": [
+            {
+              "name": "_022_韻書_附釋文互註禮部韻略",
+              "headers": [
+                "字號",
+                "字",
+                "聲調",
+                "韻目",
+                "上字",
+                "下字",
+                "釋義"
+              ],
+              "data_rows": 9813,
+              "rows_with_no_character": 0
+            }
+          ]
+        },
+        {
+          "name": "023 韻書_增修互注禮部韻略.xlsx",
+          "sha256": "b908f2547971abe73876719d36c67cffd74adde8668b991f0ecd8aa4d8cc1f53",
+          "sheets": [
+            {
+              "name": "_023_韻書_增修互注禮部韻略",
+              "headers": [
+                "字號",
+                "字",
+                "聲調",
+                "韻目",
+                "上字",
+                "下字",
+                "釋義"
+              ],
+              "data_rows": 14578,
+              "rows_with_no_character": 0
+            }
+          ]
+        },
+        {
+          "name": "024 韻書_中原音韻.xlsx",
+          "sha256": "731b2b9fb18b0a0c49f9c524e75edd1ff73961092e8ef57b4e1fe4a6089c70db",
+          "sheets": [
+            {
+              "name": "_024_韻書_中原音韻",
+              "headers": [
+                "字號",
+                "字",
+                "韻部",
+                "聲調",
+                "字母",
+                "清濁",
+                "寧繼福擬音"
+              ],
+              "data_rows": 5873,
+              "rows_with_no_character": 0
+            }
+          ]
+        },
+        {
+          "name": "025 韻書_中州音韻.xlsx",
+          "sha256": "5ad89c190577d274d5a8df52be63a6bfaf1b3e7ba4a8973713985230f73e4d9b",
+          "sheets": [
+            {
+              "name": "_025_韻書_中州音韻",
+              "headers": [
+                "字號",
+                "字",
+                "韻部",
+                "聲調",
+                "上字",
+                "下字",
+                "叶音",
+                "音",
+                "釋義"
+              ],
+              "data_rows": 8159,
+              "rows_with_no_character": 0
+            }
+          ]
+        },
+        {
+          "name": "026 韻書_洪武正韻.xlsx",
+          "sha256": "e70dd5e8e478150c6babc14d27bbcc0c0fb80379c94cb2a4cf56c801fbcd2751",
+          "sheets": [
+            {
+              "name": "01 洪武正韻",
+              "headers": [
+                "字號",
+                "字",
+                "聲調",
+                "韻部",
+                "字母",
+                "聲類",
+                "清濁",
+                "上字",
+                "下字",
+                "釋義"
+              ],
+              "data_rows": 14561,
+              "rows_with_no_character": 0
+            },
+            {
+              "name": "02 又音",
+              "headers": [
+                "字號",
+                "字",
+                "又音"
+              ],
+              "data_rows": 5,
+              "rows_with_no_character": 0
+            },
+            {
+              "name": "03 又切",
+              "headers": [
+                "字號",
+                "字",
+                "上字",
+                "下字"
+              ],
+              "data_rows": 14,
+              "rows_with_no_character": 0
+            },
+            {
+              "name": "04 擬音",
+              "headers": [
+                "字號",
+                "字",
+                "擬音"
+              ],
+              "data_rows": 15161,
+              "rows_with_no_character": 0
+            }
+          ]
+        }
+      ],
+      "workbook_count": 8,
+      "data_row_count": 166286
+    }
+  ],
+  "total_workbooks": 26,
+  "total_sheets": 34,
+  "total_records": 378214,
+  "normalized_file_sha256": "13208d7373477e805af9ff14a884215d9ccac7e091b4470a28ea18b8a206b0cc",
+  "normalized_file_size_bytes": 6795609
+}
