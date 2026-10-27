@@ -39,9 +39,23 @@ The table records 小韻, character, initial/final/tone labels, and separate rec
 
 该页明确区分在线数据库/汇编（整体受编辑著作型态保护）与独立下载的声韵资料文件；后者采用 **Public Domain Mark (PDM)** 发布，官方说明可在法律允许范围内视为无著作权利限制的信息，无需另行向编辑者申请版权及相关权利授权。项目会保留来源和 PDM 声明。
 
-待下载并验证后优先接入：
-- 上古音（含西汉、东汉）：https://xiaoxue.iis.sinica.edu.tw/ccrdata/file/ccr01_shangguyin_data_xlsx.zip
-- 中古音：https://xiaoxue.iis.sinica.edu.tw/ccrdata/file/ccr02_zhongguyin_data_xlsx.zip
-- 韵书（含《广韵》《中原音韵》等）：https://xiaoxue.iis.sinica.edu.tw/ccrdata/file/ccr03_yunshu_data_xlsx.zip
+已收到并检查这三个官方 ZIP。解析结果为 26 个工作簿、34 个工作表、共 378,214 条数据记录，所有源工作簿均无公式单元格；原始字段名和值作为字符串保留，没有把韵部标签推导成 IPA。分包记录数：上古音／两汉 56,169 条，中古时期 155,759 条，韵书 166,286 条。
 
-当前尚未随仓库打包这三个 ZIP，因为本次执行环境无法下载二进制归档并检查工作表结构；在真实文件核验前不声明已接入或已验证。
+规范化数据包已生成（压缩 JSONL 文件 SHA-256：395a7e81527e66a3a1ad5fd384f9e94f41dd03b315476ea0a8d2e08c8adae5e7；数据包 ZIP SHA-256：d49256dc9a36fdb99f4368b097472caa8a3a4b53419aaa00a285143749d7d8d8）。本开发分支已提交可复现的标准库导入脚本和带来源追溯的 SQLite 索引查询适配器；为避免声称不存在的远端文件，规范化数据载荷仍需由项目维护者放入分支，路径为 data/historical/sinica_ccr_import/sinica_ccr_records.jsonl.gz。规范化 ZIP 已在本次对话作为附件提供。
+
+安装本次规范化包：
+```bash
+mkdir -p data/historical/sinica_ccr_import
+unzip sinica_ccr_import_bundle.zip -d data/historical/sinica_ccr_import
+```
+
+从三个官方源 ZIP 重建：
+```bash
+python scripts/import_sinica_ccr.py \
+  --old-chinese ccr01_shangguyin_data_xlsx.zip \
+  --middle-chinese ccr02_zhongguyin_data_xlsx.zip \
+  --rhyme-books ccr03_yunshu_data_xlsx.zip \
+  --out-dir data/historical/sinica_ccr_import
+```
+
+数据载荷放到该目录后，Streamlit 的“中央研究院古今音资料库”面板即可查询。查询代码会在本地临时目录建立 SQLite 索引；若数据包未安装，界面会明确提示而不是返回空结果冒充数据已接入。
