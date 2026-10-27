@@ -79,8 +79,6 @@
   "prepared_normalized_bundle": {
     "status": "integrated_in_git",
     "expected_repository_path": "data/historical/sinica_ccr_import/sinica_ccr_records.jsonl.gz",
-    "bundle_filename": "sinica_ccr_import_bundle.zip",
-    "bundle_sha256": "d49256dc9a36fdb99f4368b097472caa8a3a4b53419aaa00a285143749d7d8d8",
     "normalized_file_sha256": "13208d7373477e805af9ff14a884215d9ccac7e091b4470a28ea18b8a206b0cc",
     "total_workbooks": 26,
     "total_sheets": 34,
@@ -96,6 +94,7 @@
       "ccr03_yunshu_data_xlsx": "055dfcf3fb55c83257372bc900f42722c32cc7c24ce397c17ce10a5e51f19b01"
     },
     "payload_path": "data/historical/sinica_ccr_import/sinica_ccr_records.jsonl.gz",
-    "normalized_file_size_bytes": 6795609
+    "normalized_file_size_bytes": 6795609,
+    "query_validation": "passed: 378214 rows; one Eastern Han 東 record returned"
   }
 }
