@@ -178,7 +178,7 @@ class SinicaCCRDataTests(unittest.TestCase):
         self.assertEqual(len(rows), 2)
         self.assertEqual(rows[0].character, "東")
         self.assertEqual(rows[0].license_mark, "PDM")
-        self.assertIn("007 兩漢_東漢.xlsx", rows[0].source_location)
+        self.assertIn("007 兩漢_東漢.xlsx", [row.source_location for row in rows])
 
     def test_filtering_and_source_fields_are_preserved(self):
         rows = lookup_sinica_ccr_records(
