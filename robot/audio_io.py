@@ -3,10 +3,12 @@ robot/audio_io.py
 本地采音与播放（Jetson AGX Orin 实测可用）
 
 - 录制：arecord（16kHz mono WAV）。
-- 播放：优先 pw-play（走 PipeWire 默认输出，自动跟随当前选择的设备，
-  如蓝牙音箱）；pw-play 不可用时回退 aplay 直连（用 playback_device 指定卡）。
+- 播放：优先 pw-play。默认输出是真实设备（蓝牙/USB/HDMI）时跟随
+  默认；默认掉回 Built-in（本机无内置喇叭=无物理输出）时自动定向
+  到 playback_device 配置的 sink（pw-play --target）。
+  pw-play 不可用时回退 aplay 直连（playback_device 指定卡）。
   MP3/其它格式先经 miniaudio 解码为 WAV 再播。
-设备编号从 config/settings.yaml 读取（aplay 回退用）。
+设备按名字解析成当前卡号（USB 声卡 ALSA 卡号每次重启漂移）。
 """
 import io
 import os
@@ -65,6 +67,50 @@ def _resolve_device(configured: str, kind: str) -> str:
         if configured.lower() in name.lower():
             return f"plughw:{card},{dev}"
     return configured  # 找不到就原样，让 arecord 报错兜底
+
+
+def _list_pw_sinks() -> list:
+    """解析 wpctl status → [(serial:int, name:str, is_default:bool), ...]"""
+    try:
+        out = subprocess.run(["wpctl", "status"], capture_output=True,
+                             text=True, timeout=10).stdout
+    except Exception:
+        return []
+    start = out.find("Sinks:")
+    end = out.find("Sink endpoints", start) if start >= 0 else -1
+    block = out[start:end] if start >= 0 and end > start else ""
+    sinks = []
+    for line in block.splitlines():
+        m = re.search(r"(\*?)\s*(\d+)\.\s+(.+?)\s+\[vol:", line)
+        if m:
+            sinks.append((int(m.group(2)), m.group(3).strip(),
+                          m.group(1) == "*"))
+    return sinks
+
+
+def _target_sink(playback_device: str):
+    """决定 pw-play 的目标 sink（serial；None = 跟随 PipeWire 默认输出）。
+
+    本机 Jetson AGX Orin 无内置喇叭：默认输出掉回 Built-in 基本等于
+    "没有真实输出"（蓝牙断开/USB 被切走后系统常这样回落），此时若
+    playback_device（设备名子串）对应的 sink 在线，就定向到它——
+    否则声音发给空接口，"能播"但听不见。
+    默认输出是真实设备（蓝牙/USB/HDMI，用户主动选的）→ 照旧跟随默认，
+    蓝牙 A2DP 流程不受影响。显式 plughw:/hw: 前缀 → 跟随默认
+    （aplay 回退已指定卡）。
+    """
+    if playback_device.startswith(("plughw:", "hw:", "plug:")):
+        return None
+    sinks = _list_pw_sinks()
+    if not sinks:
+        return None
+    default = next((s for s in sinks if s[2]), None)
+    if not default or not default[1].lower().startswith("built-in"):
+        return None
+    for serial, name, _ in sinks:
+        if playback_device.lower() in name.lower():
+            return serial
+    return None
 
 
 class AudioIO:
@@ -158,7 +204,14 @@ class AudioIO:
             tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
             tmp.write(wav)
             tmp.close()
-            proc = subprocess.Popen(["pw-play", tmp.name])
+            # 必须和实际播放同一个目标（_target_sink），否则默认掉回
+            # Built-in 时探测的是空接口、真正的目标设备挂死测不出来
+            cmd = ["pw-play"]
+            target = _target_sink(self.playback_device)
+            if target is not None:
+                cmd += ["--target", str(target)]
+            cmd.append(tmp.name)
+            proc = subprocess.Popen(cmd)
             proc.wait(timeout=timeout)
             return proc.returncode == 0
         except subprocess.TimeoutExpired:
@@ -210,6 +263,15 @@ class _Playback:
         self.playback_device = playback_device
         self._proc = None
 
+    def _pw_cmd(self, path: str) -> list:
+        cmd = ["pw-play"]
+        # 默认输出掉回 Built-in（无物理输出）时定向到配置设备
+        target = _target_sink(self.playback_device)
+        if target is not None:
+            cmd += ["--target", str(target)]
+        cmd.append(path)
+        return cmd
+
     def run(self) -> bool:
         """实际播放（阻塞直到播完/被打断）。"""
         wav = self._wav()
@@ -219,7 +281,7 @@ class _Playback:
             tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
             tmp.write(wav)
             tmp.close()
-            self._proc = subprocess.Popen(["pw-play", tmp.name])
+            self._proc = subprocess.Popen(self._pw_cmd(tmp.name))
             self._proc.wait()
             if self._proc.returncode == 0:
                 return True

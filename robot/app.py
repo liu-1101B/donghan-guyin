@@ -176,8 +176,6 @@ def _gen_worker(job, session, cfg):
             },
             "ms": time.time(),
         })
-        if not (wav_u or wav_r or mp3_m):
-            return
         # 自动朗读：按模式选主段（自然语音→现代段；东汉古音→古音段），
         # 主段缺失时按 古音回答 → 现代回答 → 我的话 顺序退
         job["phase"] = "play"
@@ -187,14 +185,21 @@ def _gen_worker(job, session, cfg):
             (x for x in (a["reply_anc"], a["reply_mod"], a["user"])
              if x["data"]), None)
         try:
-            ai = get_audio_io()
-            job["play_ok"] = _ensure_playable(ai, spinner=False)
-            if job["play_ok"]:
-                ai.play_async(main["data"])
+            if main and main["data"]:
+                ai = get_audio_io()
+                job["play_ok"] = _ensure_playable(ai, spinner=False)
+                if job["play_ok"]:
+                    ai.play_async(main["data"])
+            else:
+                job["play_ok"] = None
         except Exception:
             job["play_ok"] = False
+        # 朗读就绪标记：fragment 以此为"整轮完成"信号落盘
+        # （避免先落盘后朗读，导致 play_note 永远取不到值）
+        job["play_done"] = True
     except Exception as e:
         job["result"] = ("error", str(e))
+        job["play_done"] = True
 
 
 # ---------- 全局组件（跨 rerun 持久） ----------
@@ -285,16 +290,25 @@ def _bt_healthy() -> bool:
 
 
 def _ensure_playable(ai, spinner=True) -> bool:
-    """确保蓝牙音箱可播：sink 检查 → 通道探测 →(异常则)自动重连。
+    """确保**默认输出设备**可播（设备无关：蓝牙 / USB / 内置均支持）。
 
-    正常时 ~2.5s；仅异常时触发一次 bt_reset.sh（断开→重连→设默认，
-    ~20s）。重连后复检 sink+探测。spinner=False 用于自动朗读路径
-    （避免每次生成都闪转圈）。
+    播放走 PipeWire 默认输出（pw-play 自动跟随当前选择的设备）：
+      - 默认输出是蓝牙 A2DP sink：sink 存在（消失=无声但不报错）
+        + 通道探测；probe 失败（假连接/挂死）才 bt_reset.sh 自动重连
+      - 默认输出是其他设备（用户主动切到 USB/内置等）：只探测默认
+        通道，绝不触发蓝牙重连——重连蓝牙会把默认输出抢回耳机，
+        适得其反
+    正常时 ~2.5s；仅蓝牙假连接时走 bt_reset.sh（~20s）。
+    spinner=False 用于自动朗读路径（避免每次生成都闪转圈）。
     """
-    if _bt_healthy() and ai.probe():
+    s = bt_status(BT_MAC)
+    if not s["is_default"]:
+        # 默认输出不是蓝牙（用户切到 USB/内置等，或蓝牙未连）：
+        # 只探测默认通道，绝不触发蓝牙重连
+        return ai.probe()
+    if ai.probe():
         return True
-    # 显式 bash 调用：不依赖脚本可执行位（曾被同步/拷贝丢成 600，
-    # 导致 PermissionError）；cwd=ROOT 保证脚本内相对路径可用
+    # 蓝牙是默认输出但探测失败（A2DP 假连接/挂死）→ 自动重连一次
     _bt_reset = os.path.join(ROOT, "robot", "bt_reset.sh")
     if spinner:
         with st.spinner("蓝牙通道异常，正在自动重连…"):
@@ -571,7 +585,9 @@ with col2:
     @st.fragment(run_every=1)
     def _gen_status():
         job = st.session_state.get("gen_job")
-        if not job or job["result"] is None:
+        # 完成信号是 play_done（合成+朗读就绪），不是 result——
+        # 若只认 result，会在自动朗读还在跑时就落盘，play_note 取不到值
+        if not job or not job.get("play_done"):
             if job:
                 import html as _html
                 label = _PHASE_LABEL.get(job["phase"], "生成中…")
