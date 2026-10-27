@@ -202,6 +202,20 @@ class SinicaCCRDataTests(unittest.TestCase):
             {"sinica_ccr_middle_chinese": 1, "sinica_ccr_old_chinese": 1},
         )
 
+
+    def test_official_sinica_payload_is_bundled_and_queryable(self):
+        self.assertTrue(dataset_available())
+        self.assertEqual(sinica_ccr_record_count(), 378214)
+        records = lookup_sinica_ccr_records(
+            "東",
+            dataset_id="sinica_ccr_old_chinese",
+            period="东汉",
+            limit=20,
+        )
+        self.assertTrue(records)
+        self.assertTrue(any(record.fields.get("韻部") == "東" for record in records))
+        self.assertTrue(all(record.license_mark == "PDM" for record in records))
+
     def test_missing_bundle_raises_actionable_error(self):
         missing = Path(self.temp_dir.name) / "missing.jsonl.gz"
         with self.assertRaisesRegex(FileNotFoundError, "Extract sinica_ccr_records"):
