@@ -1,6 +1,7 @@
 name: Import official Sinica CCR data
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - feat/historical-phonology-foundation
