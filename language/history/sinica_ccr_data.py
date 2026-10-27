@@ -204,6 +204,7 @@ def lookup_sinica_ccr_records(
     period: Optional[str] = None,
     system: Optional[str] = None,
     record_type: Optional[str] = None,
+    workbook_keyword: Optional[str] = None,
     path: Optional[str] = None,
     limit: int = 100,
 ) -> tuple[SinicaCCRRecord, ...]:
@@ -222,6 +223,9 @@ def lookup_sinica_ccr_records(
         if value is not None:
             clauses.append(f"{column} = ?")
             params.append(value)
+    if workbook_keyword:
+        clauses.append("source_workbook LIKE ?")
+        params.append("%" + workbook_keyword + "%")
     params.append(limit)
     sql = (
         "SELECT dataset_id, period, system, record_type, character, "
