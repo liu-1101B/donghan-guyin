@@ -32,7 +32,7 @@
 | P0：已接入 | PHONO-ML（CC BY 4.0） | 覆盖大、已有逐字中古音转写 | 完成数据校验与《广韵》音韵地位交叉关联 |
 | P0：已接入 | 中原音韵数据（CC0） | 已有多个元代方案的离线查询 | 运行上游一致性校验并抽查异读 |
 | P1：规则适配 | tshet-uinh-examples | 多个学者中古音方案已实现为规则，能支持“学者切换” | 固定 MIT 版本；评估 JS/Python 适配；对每套规则做金标准测试 |
-| P1：申请/确认后接入 | 中央研究院汉字古今音资料库 | 覆盖先秦至现代多个系统，潜在价值最高 | 先确认下载条款、再确认数据字段与各时期的具体来源 |
+| P1：数据载荷待安装 | 中央研究院汉字古今音资料库 | 覆盖先秦、两汉、中古与多种韵书体系，直接支持东汉研究 | 已核验 PDM 下载条款并完成 378,214 条记录转换；放入数据文件后启用查询 |
 | P1：条件接入 | 《蒙古字韵》、复原《切韵》 | 补足元代材料和《切韵》不同复原版本 | 逐文件核对数据授权；明确哪些字段来自原书、哪些是现代研究者整理/拟音 |
 | P2：研究验证 | WikiHan、诗经语料、论文配套重构样本、古典文本语料 | 用于押韵、音变对应、覆盖率和方案间差异验证 | 做成独立的测试/研究数据层，不混入主字音表 |
 | 仅作外部参考 | 韵典网中许可未明确的汇编数据、未确认授权的影像/提取数据 | 信息有价值，但不能把可访问当成可再分发 | 保存链接、书目、版本、页码；必要时申请许可 |
@@ -65,28 +65,34 @@ PHONO-ML 和《中原音韵》数据快照已提交到项目分支，并通过�
 - 自动化测试已增加，但由于当前执行环境无法访问 GitHub 以克隆仓库，尚未在真实本地环境运行；不能把“已写测试”描述为“测试通过”。
 
 
-### 中央研究院「汉字古今音资料库」许可核查补记（2026-10-27）
+### 中央研究院「汉字古今音资料库」许可与导入状态（2026-10-27）
 
-已查看官方 [下载小學堂聲韻資料](https://xiaoxue.iis.sinica.edu.tw/ccrdata/) 页面“授权方式”原文。网页明确区分：
-1. 整个在线「汉字古今音资料库」作为电子资料库/汇编整体受到编辑著作型态保护；
-2. 官方提供独立下载的声韵资料文件，按事实性记录整理并以 **Public Domain Mark (PDM)** 发布；官网说明，在法律允许范围内，使用者可将这些独立文件视为无著作权利限制的信息，无需另洽编辑者申请著作权及著作相关权利授权。
-
-因此，项目可直接接入**官方独立下载的声韵资料包**，并以开放方式随项目分发；出于学术可追溯与尊重整理者，仍应保留来源链接、PDM 声明、下载日期、文件哈希和原始字段，不应把网站界面/程序或整个在线数据库抓取副本一起视为无权利限制。
-
-优先下载包：
-- [上古音资料](https://xiaoxue.iis.sinica.edu.tw/ccrdata/file/ccr01_shangguyin_data_xlsx.zip)：包含页面列出的先秦多学者体系以及西汉、东汉音系。
-- [中古音资料](https://xiaoxue.iis.sinica.edu.tw/ccrdata/file/ccr02_zhongguyin_data_xlsx.zip)：包含南北朝至隋唐资料和多种学者系统。
-- [韵书资料](https://xiaoxue.iis.sinica.edu.tw/ccrdata/file/ccr03_yunshu_data_xlsx.zip)：包含《广韵》《集韵》《中原音韵》《洪武正韵》等。
-
-**尚未完成数据接入**：此执行环境无法直接下载官方 ZIP 二进制文件（网络 DNS 受限，网页检索器也不能把 ZIP 内容作为文本读取），因此未将未经实际读取/校验的文件假装为已接入。拿到官方 ZIP 后，应先审查工作簿、字段、行数、编码及多音字结构，再编写导入器，并计算 SHA-256 后推送。
-
-
-### 实际导入核验记录
+官方 [授权页](https://xiaoxue.iis.sinica.edu.tw/ccrdata/) 区分在线数据库／汇编整体与独立下载的声韵资料文件。后者标示为 **Public Domain Mark (PDM)**，官网说明在法律允许范围内可视作无著作权利限制的信息；此说明不把网站界面、程序或整个在线数据库抓取副本自动归为公有领域。
 
 用户提供的三个官方 ZIP 已完成结构检查和规范化解析：
-- 26 个工作簿、34 个工作表、378,214 条非空数据行。
-- 分包：上古音／两汉 56,169 条；魏晋南北朝至隋唐 155,759 条；韵书 166,286 条。
-- 源工作簿哈希、源工作表、原始行号及字段名保留在 JSONL 每条记录中；无公式单元格。
-- 已推送导入脚本 `scripts/import_sinica_ccr.py`、查询适配器 `language/history/sinica_ccr_data.py`、UI 查询面板与测试。规范化数据包作为本次对话附件提供，尚未直接写入 Git 分支的数据目录，因此在文件包安装前，远端分支的 UI 会明确提示数据文件缺失。
-- 规范化 JSONL gzip SHA-256：`395a7e81527e66a3a1ad5fd384f9e94f41dd03b315476ea0a8d2e08c8adae5e7`。
-- PDM 授权仍限定于官网的独立下载声韵资料文件；此记录不将整个在线数据库或网站程序等同于公有领域内容。
+- 26 个工作簿、34 个工作表，共 378,214 条非空数据记录。
+- 上古音／两汉：56,169 条；魏晋南北朝至隋唐：155,759 条；韵书：166,286 条。
+- 源工作簿 SHA-256、源工作表、原始行号、原始字段名和值均保留；所有源工作簿均无公式单元格。
+- 已推送可复现导入器 `scripts/import_sinica_ccr.py`、SQLite 索引查询适配器 `language/history/sinica_ccr_data.py`、Streamlit 查询面板和测试。
+- 规范化 JSONL gzip SHA-256：`395a7e81527e66a3a1ad5fd384f9e94f41dd03b315476ea0a8d2e08c8adae5e7`；本次对话提供的 ZIP 数据包 SHA-256：`d49256dc9a36fdb99f4368b097472caa8a3a4b53419aaa00a285143749d7d8d8`。
+- **数据代码已推送，但规范化数据载荷本身尚未直接写入 Git 分支。** 在项目维护者将对话提供的 ZIP 解压到 `data/historical/sinica_ccr_import/` 后，查询面板才会实际返回这些记录。当前 UI 会明确提示文件缺失，不会将空结果冒充已接入数据。
+
+获取官方原始数据包：
+- [上古音资料（含西汉、东汉）](https://xiaoxue.iis.sinica.edu.tw/ccrdata/file/ccr01_shangguyin_data_xlsx.zip)
+- [中古时期资料](https://xiaoxue.iis.sinica.edu.tw/ccrdata/file/ccr02_zhongguyin_data_xlsx.zip)
+- [韵书资料（含《广韵》《集韵》《中原音韵》《洪武正韵》等）](https://xiaoxue.iis.sinica.edu.tw/ccrdata/file/ccr03_yunshu_data_xlsx.zip)
+
+安装规范化包：
+```bash
+mkdir -p data/historical/sinica_ccr_import
+unzip sinica_ccr_import_bundle.zip -d data/historical/sinica_ccr_import
+```
+
+从原始 ZIP 重建：
+```bash
+python scripts/import_sinica_ccr.py \
+  --old-chinese ccr01_shangguyin_data_xlsx.zip \
+  --middle-chinese ccr02_zhongguyin_data_xlsx.zip \
+  --rhyme-books ccr03_yunshu_data_xlsx.zip \
+  --out-dir data/historical/sinica_ccr_import
+```
