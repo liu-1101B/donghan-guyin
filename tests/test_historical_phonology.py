@@ -1,10 +1,14 @@
 """Tests for historical timeline and reconstruction metadata."""
 import unittest
+import gzip
+import json
+import tempfile
+from pathlib import Path
 from language.history import (TIMELINE, get_period, get_system, lookup_reading,
                               lookup_qieyun_positions, period_at,
                               qieyun_record_count, systems_for_period,
                               lookup_phono_ml, phono_ml_record_count,
-                              lookup_zhongyuan, zhongyuan_record_count)
+                              lookup_zhongyuan, zhongyuan_record_count,\n                              dataset_available, lookup_sinica_ccr_records,\n                              sinica_ccr_record_count, sinica_ccr_package_counts)
 
 
 class TimelineTests(unittest.TestCase):
@@ -122,6 +126,84 @@ class SystemsTests(unittest.TestCase):
     def test_requires_one_character(self):
         with self.assertRaises(ValueError):
             lookup_reading("中国", "han_eastern_experimental")
+
+
+
+class SinicaCCRDataTests(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.path = Path(self.temp_dir.name) / "records.jsonl.gz"
+        self.fixture = [
+            {
+                "dataset_id": "sinica_ccr_old_chinese",
+                "source_url": "https://xiaoxue.iis.sinica.edu.tw/ccrdata/file/ccr01_shangguyin_data_xlsx.zip",
+                "license_mark": "PDM",
+                "period": "东汉",
+                "system": "韵部资料",
+                "record_type": "historical_rhyme_group",
+                "source_workbook": "007 兩漢_東漢.xlsx",
+                "source_sheet": "_007_兩漢_東漢",
+                "source_row": 2,
+                "source_workbook_sha256": "a" * 64,
+                "character": "東",
+                "fields": {"字號": "1", "字": "東", "韻部": "東"},
+            },
+            {
+                "dataset_id": "sinica_ccr_middle_chinese",
+                "source_url": "https://xiaoxue.iis.sinica.edu.tw/ccrdata/file/ccr02_zhongguyin_data_xlsx.zip",
+                "license_mark": "PDM",
+                "period": "隋唐",
+                "system": "王力系統",
+                "record_type": "scholar_reconstruction",
+                "source_workbook": "014 隋唐_擬音_王力系統.xlsx",
+                "source_sheet": "_014_隋唐_擬音_王力系統",
+                "source_row": 2,
+                "source_workbook_sha256": "b" * 64,
+                "character": "東",
+                "fields": {"字號": "1", "字": "東", "聲母": "t", "韻母": "uŋ"},
+            },
+        ]
+        with gzip.open(self.path, "wt", encoding="utf-8", newline="") as handle:
+            for row in self.fixture:
+                handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def test_dataset_path_and_multiple_readings(self):
+        self.assertTrue(dataset_available(str(self.path)))
+        rows = lookup_sinica_ccr_records("東", path=str(self.path))
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0].character, "東")
+        self.assertEqual(rows[0].license_mark, "PDM")
+        self.assertIn("007 兩漢_東漢.xlsx", rows[0].source_location)
+
+    def test_filtering_and_source_fields_are_preserved(self):
+        rows = lookup_sinica_ccr_records(
+            "東", dataset_id="sinica_ccr_middle_chinese",
+            period="隋唐", workbook_keyword="王力", path=str(self.path),
+        )
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].fields["聲母"], "t")
+        self.assertEqual(rows[0].fields["韻母"], "uŋ")
+        self.assertEqual(rows[0].system, "王力系統")
+        self.assertEqual(rows[0].source_row, 2)
+
+    def test_record_counts_by_package(self):
+        self.assertEqual(sinica_ccr_record_count(path=str(self.path)), 2)
+        self.assertEqual(
+            sinica_ccr_record_count(dataset_id="sinica_ccr_old_chinese", path=str(self.path)),
+            1,
+        )
+        self.assertEqual(
+            sinica_ccr_package_counts(path=str(self.path)),
+            {"sinica_ccr_middle_chinese": 1, "sinica_ccr_old_chinese": 1},
+        )
+
+    def test_missing_bundle_raises_actionable_error(self):
+        missing = Path(self.temp_dir.name) / "missing.jsonl.gz"
+        with self.assertRaisesRegex(FileNotFoundError, "Extract sinica_ccr_records"):
+            lookup_sinica_ccr_records("東", path=str(missing))
 
 
 if __name__ == "__main__":
