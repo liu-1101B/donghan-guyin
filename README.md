@@ -135,13 +135,13 @@ build.bat
 - `language/history/qieyun_data.py`、`phono_ml_data.py`、`zhongyuan_data.py`：三类数据的离线查询适配器。
 - `language/history/provenance.py`：保存来源、版本、条目位置、推导规则与置信度。
 - `guyun_app.py`：页面底部新增「历史音系探索（研究预览）」折叠面板，可按时期、方案和单字查询已接入记录。
-- `tests/test_historical_phonology.py`：测试时期、数据检索、多方案标识、来源追溯及“无 IPA 不伪装成可合成”。
+- `scripts/import_sinica_ccr.py`：从三个官方 ZIP 可重复生成有来源元数据的规范化 JSONL 数据包。\n- `tests/test_historical_phonology.py`：测试时期、数据检索、多方案标识、来源追溯及索引查询。
 - `.github/workflows/historical-phonology-tests.yml`：自动运行 Python 编译检查与历史音系回归测试。
 
 运行测试：
 
 ```bash
-python -m compileall -q language/history guyun_app.py
+python -m compileall -q language/history scripts guyun_app.py
 python -m unittest discover -s tests -p "test_historical_phonology.py" -v
 ```
 
