@@ -11,7 +11,7 @@
 | 1 | [NK2028 tshet-uinh-data](https://github.com/nk2028/tshet-uinh-data) | 《广韵》字头、小韵、反切、音韵地位；另含《王三》、韵图等部分数据 | 仓库标注 CC0-1.0；逐文件仍应记录版本与来源 | **高**：字段说明、构建脚本、校勘记录公开；部分表明确标为 beta / 未完成 | 《广韵反切音韵地位表》标注 beta；不同版本校改和补字须保留说明；不是 IPA | **高；已有一份数据接入**。项目内 `data/historical/guangyun_positions.csv`，需保留上游 Blob SHA | 作为中古音基础索引；持续同步时固定 commit/SHA，不覆盖项目校勘记录 |
 | 2 | [PHONO-ML Database](https://github.com/alxdrdelaporte/PHONO-ML_database) | 中古音 Baxter–Sagart 转写；约 26,224 个字/转写配对、20,276 个不同字 | **CC BY 4.0**；需署名、附许可证与修改说明 | **较高**：研究人员/研究机构背景，公开参考文献与部分核对说明 | 自动生成，作者明确说明仍可能有错误；Baxter–Sagart 转写不是 IPA，也不是语音录音 | **很高；已接入**：本地离线逐字查询，保留一字多读与反切/音韵地位关联 | 优先评估接入；记录数据库版本、来源、转写方案和多音字 |
 | 3 | [NK2028 tshet-uinh-examples](https://github.com/nk2028/tshet-uinh-examples) | 规则/程序：白一平转写、高本汉、王力、潘悟云、unt、msoeg 等中古音方案；亦含若干后世音系推导 | 仓库代码为 **MIT**（历史版本曾用 CC0，需锁定具体 release/commit）；代码许可不等于所有学术重构输出可无条件再分发 | **较高**：公开规则代码、版本历史与测试；各方案仍是学者模型 | 是从音韵地位推导输出的规则，不是独立原始古音记录；输出取决于规则版本和输入位置 | **很高（规则接入）**：可支持学者方案切换，但需要评估 JS 依赖与 Python 接口 | 优先选择一个方案做可重复适配；保留 MIT、作者、commit、方案原始文献 |
-| 4 | [NK2028 zhongyuan-data](https://github.com/nk2028/zhongyuan-data) | 《中原音韵》条目及杨耐思、宁继福、薛凤生、unt 等方案的转写/音位信息；TSV 共 5,877 条数据记录（文件共 5,878 行，含表头） | 仓库标注 **CC0-1.0** | **较高**：公开数据、方案书目及 `verify.py` 一致性检查 | 各家转写是不同分析，不应合并成一个“标准元音”；需要逐方案标识 | **高；已接入**：本地离线查询，按杨耐思、宁继福、薛凤生、unt 等方案分别登记 | 建议接入；逐方案保留原字段，执行上游校验脚本或等价检查 |
+| 4 | [NK2028 zhongyuan-data](https://github.com/nk2028/zhongyuan-data) | 《中原音韵》条目及杨耐思、宁继福、薛凤生、unt 等方案的转写/音位信息；TSV 共 5,877 条数据记录（文件共 5,878 行，含表头） | 仓库标注 **CC0-1.0** | **较高**：公开数据、方案书目及 `verify.py` 一致性检查 | 各家转写是不同分析，不应合并成一个“标准元音”；需要逐方案标识 | **高；已接入**：本地离线查询，按杨耐思、宁继福、薛凤生、unt 等方案分别登记 | 数据已接入；逐方案保留原字段，继续执行上游校验脚本或等价检查 |
 | 5 | [NK2028 menggu-ziyun-data](https://github.com/nk2028/menggu-ziyun-data) | 《蒙古字韵》小韵、字头、八思巴字、声调、与切韵音韵地位的对应，以及 unt 拟音/转写 | 仓库有 LICENSE 文件并标示 MIT；数据字段混合沈钟伟校本、古今文字集成与贡献者整理，**再分发前应核对数据与各上游来源权利** | **中高**：来源和字段构成有说明，规模/校勘范围仍需单独核验 | 既有文献转写也有现代研究者拟音；不是所有字段都来自同一许可证或同一作者 | **高（条件接入）**：补充元代音系及八思巴字对照 | 先核对 LICENSE 与具体数据来源，再按字段保留来源，不要把代码 MIT 简化为整份数据无条件开放 |
 | 6 | [NK2028 qieyun-restored](https://github.com/nk2028/qieyun-restored) | 藤田拓海、李永富对《切韵》的复原数据；附表数据、版本差异和音韵地位 | 仓库标注 MIT；数据依据藤田 2017 博士论文 / 2023 专著等，**论文/书中数据的再分发权应另行确认** | **较高（文献依据强）**：来源到论文/专著，公开复原过程 | 属于学术复原，不是直接保存下来的完整《切韵》原本；不同复原结果不可混同 | **高（需许可复核）**：非常适合展示“复原版本之间的差异” | 先登记并比较差异；确认数据再分发授权后再随项目打包 |
 | 7 | [台湾中央研究院「汉字古今音资料库」下载页](https://xiaoxue.iis.sinica.edu.tw/ccrdata/) | 超过 134 万笔声韵资料；先秦、两汉、魏晋南北朝、隋唐、元明韵书及多种现代方言；包含高本汉、王力、董同龢、周法高、李方桂、陈新雄等系统 | **独立下载的声韵资料文件明确标示为 PDM（Public Domain Mark）**；官网说明这些事实性声韵记录在法律允许范围内可视为无著作权利限制的信息，可不另行申请版权及相关权利授权。此说明针对独立下载文件，不等于整个在线数据库/汇编、网站程序均无权利限制。建议随数据保留出处、版本与 PDM 声明。 | **很高（学术机构与多系统覆盖）**；仍需看各数据集的版本、整理说明和下载许可 | 覆盖面是本清单中最广之一，但大规模数据库不等于每个条目都同等可靠；需检查字段定义和各时期的具体来源 | **很高；许可已由官网对独立下载文件作出明确说明**，适合导入上古音、两汉音系、中古音及韵书资料；仍需将原始文件版本、字段和各方案分开保存 | 官方 ZIP 已核验并完成规范化：26 个工作簿、34 个工作表、378,214 条记录。导入脚本及查询适配器已推送；数据载荷包需放入 data/historical/sinica_ccr_import/ 后才会被查询接口启用 |
@@ -32,7 +32,7 @@
 | P0：已接入 | PHONO-ML（CC BY 4.0） | 覆盖大、已有逐字中古音转写 | 完成数据校验与《广韵》音韵地位交叉关联 |
 | P0：已接入 | 中原音韵数据（CC0） | 已有多个元代方案的离线查询 | 运行上游一致性校验并抽查异读 |
 | P1：规则适配 | tshet-uinh-examples | 多个学者中古音方案已实现为规则，能支持“学者切换” | 固定 MIT 版本；评估 JS/Python 适配；对每套规则做金标准测试 |
-| P1：数据载荷待安装 | 中央研究院汉字古今音资料库 | 覆盖先秦、两汉、中古与多种韵书体系，直接支持东汉研究 | 已核验 PDM 下载条款并完成 378,214 条记录转换；放入数据文件后启用查询 |
+| P1：已接入 | 中央研究院汉字古今音资料库 | 覆盖先秦、两汉、中古与多种韵书体系，直接支持东汉研究 | 已在开发分支导入 378,214 条记录；查询保留来源和原始字段 |
 | P1：条件接入 | 《蒙古字韵》、复原《切韵》 | 补足元代材料和《切韵》不同复原版本 | 逐文件核对数据授权；明确哪些字段来自原书、哪些是现代研究者整理/拟音 |
 | P2：研究验证 | WikiHan、诗经语料、论文配套重构样本、古典文本语料 | 用于押韵、音变对应、覆盖率和方案间差异验证 | 做成独立的测试/研究数据层，不混入主字音表 |
 | 仅作外部参考 | 韵典网中许可未明确的汇编数据、未确认授权的影像/提取数据 | 信息有价值，但不能把可访问当成可再分发 | 保存链接、书目、版本、页码；必要时申请许可 |
@@ -67,32 +67,14 @@ PHONO-ML 和《中原音韵》数据快照已提交到项目分支，并通过�
 
 ### 中央研究院「汉字古今音资料库」许可与导入状态（2026-10-27）
 
-官方 [授权页](https://xiaoxue.iis.sinica.edu.tw/ccrdata/) 区分在线数据库／汇编整体与独立下载的声韵资料文件。后者标示为 **Public Domain Mark (PDM)**，官网说明在法律允许范围内可视作无著作权利限制的信息；此说明不把网站界面、程序或整个在线数据库抓取副本自动归为公有领域。
+官方 [授权页](https://xiaoxue.iis.sinica.edu.tw/ccrdata/) 区分在线数据库／汇编整体与独立下载的声韵资料文件。后者标示 **Public Domain Mark (PDM)**，官网说明在法律允许范围内可视作无著作权利限制的信息；这不表示网站界面、程序或整个在线数据库抓取副本也自动属于公有领域。
 
-用户提供的三个官方 ZIP 已完成结构检查和规范化解析：
+用户提供的三个独立下载 ZIP 已完成结构检查，并由 GitHub Actions 从官方 URL 重下载，全部通过与用户文件相同的 SHA-256 校验后导入开发分支：
 - 26 个工作簿、34 个工作表，共 378,214 条非空数据记录。
-- 上古音／两汉：56,169 条；魏晋南北朝至隋唐：155,759 条；韵书：166,286 条。
-- 源工作簿 SHA-256、源工作表、原始行号、原始字段名和值均保留；所有源工作簿均无公式单元格。
-- 已推送可复现导入器 `scripts/import_sinica_ccr.py`、SQLite 索引查询适配器 `language/history/sinica_ccr_data.py`、Streamlit 查询面板和测试。
-- 规范化 JSONL gzip SHA-256：`395a7e81527e66a3a1ad5fd384f9e94f41dd03b315476ea0a8d2e08c8adae5e7`；本次对话提供的 ZIP 数据包 SHA-256：`d49256dc9a36fdb99f4368b097472caa8a3a4b53419aaa00a285143749d7d8d8`。
-- **数据代码已推送，但规范化数据载荷本身尚未直接写入 Git 分支。** 在项目维护者将对话提供的 ZIP 解压到 `data/historical/sinica_ccr_import/` 后，查询面板才会实际返回这些记录。当前 UI 会明确提示文件缺失，不会将空结果冒充已接入数据。
+- 上古音／两汉 56,169 条；魏晋南北朝至隋唐 155,759 条；历代韵书 166,286 条。
+- 所有记录保留工作簿 SHA-256、源工作表、原始行号、原始字段名和值。
+- 数据已提交至 `data/historical/sinica_ccr_import/sinica_ccr_records.jsonl.gz`；规范化 JSONL gzip SHA-256 为 `13208d7373477e805af9ff14a884215d9ccac7e091b4470a28ea18b8a206b0cc`。
+- [导入工作流日志](https://github.com/liu-1101B/donghan-guyin/actions/runs/40472248781)包含源 ZIP 哈希验证、统计断言、真实查询验证和成功推送记录。
+- 查询适配器在本机临时目录生成 SQLite 索引；数据载荷已在分支中，正常 checkout 后无需再人工放入。
 
-获取官方原始数据包：
-- [上古音资料（含西汉、东汉）](https://xiaoxue.iis.sinica.edu.tw/ccrdata/file/ccr01_shangguyin_data_xlsx.zip)
-- [中古时期资料](https://xiaoxue.iis.sinica.edu.tw/ccrdata/file/ccr02_zhongguyin_data_xlsx.zip)
-- [韵书资料（含《广韵》《集韵》《中原音韵》《洪武正韵》等）](https://xiaoxue.iis.sinica.edu.tw/ccrdata/file/ccr03_yunshu_data_xlsx.zip)
-
-安装规范化包：
-```bash
-mkdir -p data/historical/sinica_ccr_import
-unzip sinica_ccr_import_bundle.zip -d data/historical/sinica_ccr_import
-```
-
-从原始 ZIP 重建：
-```bash
-python scripts/import_sinica_ccr.py \
-  --old-chinese ccr01_shangguyin_data_xlsx.zip \
-  --middle-chinese ccr02_zhongguyin_data_xlsx.zip \
-  --rhyme-books ccr03_yunshu_data_xlsx.zip \
-  --out-dir data/historical/sinica_ccr_import
-```
+直接访问数据：[来源与许可](../data/historical/README.md)、[逐工作表清单](../data/historical/sinica_ccr_import/manifest.json)、[工作表摘要](../data/historical/sinica_ccr_import/summary.csv)。
