@@ -31,3 +31,17 @@ This is a database of Baxter–Sagart style Middle Chinese transcriptions, autom
 - Local copy: `data/historical/zhongyuan_yinyun.tsv`
 
 The table records 小韻, character, initial/final/tone labels, and separate reconstructions attributed to Yang Naisi, Ning Jifu, Xue Fengsheng, and unt. Each scheme is exposed as a separate system ID; do not collapse the columns into one canonical pronunciation. The transcriptions are retained as source values and are not declared TTS-ready.
+
+
+## Academia Sinica 古今音资料库：官方独立下载数据
+
+官方授权页：https://xiaoxue.iis.sinica.edu.tw/ccrdata/
+
+该页明确区分在线数据库/汇编（整体受编辑著作型态保护）与独立下载的声韵资料文件；后者采用 **Public Domain Mark (PDM)** 发布，官方说明可在法律允许范围内视为无著作权利限制的信息，无需另行向编辑者申请版权及相关权利授权。项目会保留来源和 PDM 声明。
+
+待下载并验证后优先接入：
+- 上古音（含西汉、东汉）：https://xiaoxue.iis.sinica.edu.tw/ccrdata/file/ccr01_shangguyin_data_xlsx.zip
+- 中古音：https://xiaoxue.iis.sinica.edu.tw/ccrdata/file/ccr02_zhongguyin_data_xlsx.zip
+- 韵书（含《广韵》《中原音韵》等）：https://xiaoxue.iis.sinica.edu.tw/ccrdata/file/ccr03_yunshu_data_xlsx.zip
+
+当前尚未随仓库打包这三个 ZIP，因为本次执行环境无法下载二进制归档并检查工作表结构；在真实文件核验前不声明已接入或已验证。
