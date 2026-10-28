@@ -16,6 +16,19 @@
 
 ## 快速开始
 
+### Jetson AGX Orin：机器人新版界面
+
+在 Jetson/Linux 上，进入**当前克隆的仓库根目录**后运行：
+
+```bash
+chmod +x robot/open_app.sh
+./robot/open_app.sh
+```
+
+此入口启动 `robot/app.py`（机器人新版界面，包含语音模式、设备播放和对话历史）。脚本会按自身所在位置定位当前仓库，不会再跳回开发机的固定目录；若 8501 端口被其他应用占用，会自动选择后续空闲端口，并在终端打印实际访问地址。
+
+**注意：** 下方的 `start.bat` 和 `streamlit run guyun_app.py` 启动的是传统独立合成器界面，不是机器人新版界面。请勿用它们来验证 `robot/app.py` 的前端更新。
+
 ### 方式一：下载安装包（推荐）
 
 从 Releases 下载 `古韵合成器_Setup_v3.0.0.exe`，双击安装即可。
