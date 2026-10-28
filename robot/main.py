@@ -6,11 +6,11 @@ robot/main.py
     python -m robot.main            # 交互模式：按 Enter 开始录音，再按 Enter 结束
     python -m robot.main --selftest # 自检：录 2 秒并回放
     python -m robot.main --text "今天天气如何"   # 免麦克风测试：直接给文本
-    python -m robot.main --mode ancient  # 默认东汉古音模式
+    python -m robot.main --mode ancient  # 默认东汉古韵模式
 
 按键约定：
     Enter  录音 5 秒（说完再按 Enter 也可提前按，录满 5 秒为止）
-    m      切换 自然语音/东汉古音 模式
+    m      切换 自然语音/东汉古韵 模式
     r      重播上一条回答
     c      清空对话历史
     q      退出
@@ -86,7 +86,7 @@ def handle_user_text(ai, asr, router, session, text, save=True):
     print(f"[译文] {turn.translation}")
     print(f"[答] {turn.reply}  (来源: {turn.source}, 模式: {router.label()})")
     if turn.mode == "ancient" and not turn.audio_kind == "mp3":
-        print(f"[古音覆盖] {turn.coverage_pct}% 已收录，"
+        print(f"[古韵覆盖] {turn.coverage_pct}% 已收录，"
               f"{turn.approx_chars} 字为拼音近似")
     if save:
         safe = "".join(c for c in text if c.isalnum())[:8] or "turn"
@@ -141,9 +141,9 @@ def run_selftest(ai, asr, router):
     p = os.path.join(OUT_DIR, "selftest_ancient.wav")
     with open(p, "wb") as f:
         f.write(wav)
-    print(f"古音合成: {len(wav)} 字节, 覆盖 {res.coverage_pct}% -> {p}")
+    print(f"古韵合成: {len(wav)} 字节, 覆盖 {res.coverage_pct}% -> {p}")
     if ai.play_file(p):
-        print("古音播放 OK")
+        print("古韵播放 OK")
     mp3 = __import__("services.tts_client", fromlist=["speak_natural"]).speak_natural(sentence)
     if mp3:
         p2 = os.path.join(OUT_DIR, "selftest_natural.mp3")
@@ -182,7 +182,7 @@ def main():
         return
 
     print("=" * 46)
-    print(" 东汉古音机器人  (按键说话版)")
+    print(" 东汉古韵机器人  (按键说话版)")
     print(f" 当前模式: {router.label()}   对话容量: {session.max_turns} 轮")
     print(" Enter=录音  m=切换模式  r=重播  c=清空历史  q=退出")
     print("=" * 46)
