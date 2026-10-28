@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 古音机器人启动器：确保 8501 服务在跑，然后打开浏览器
+# 古韵机器人启动器：确保 8501 服务在跑，然后打开浏览器
 ROOT="/home/lab006/.dsh/ungrouped/deepdive/donghan-guyin"
 cd "$ROOT" || exit 1
 
