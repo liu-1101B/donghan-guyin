@@ -1,0 +1,37 @@
+name: Windows robot compatibility
+
+on:
+  push:
+    branches:
+      - feat/windows-robot-compat
+    paths:
+      - "robot/**"
+      - "services/**"
+      - "language/**"
+      - "tests/test_windows_audio.py"
+      - "requirements-robot.txt"
+      - ".github/workflows/windows-compat-tests.yml"
+  pull_request:
+
+jobs:
+  audio-adapter-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test dependencies
+        run: python -m pip install numpy sounddevice miniaudio
+      - name: Compile application modules
+        run: python -m compileall -q robot services language
+      - name: Run Windows audio adapter unit tests
+        run: python -m unittest discover -s tests -p "test_windows_audio.py" -v
+      - name: Smoke-test Windows platform dispatch
+        if: runner.os == 'Windows'
+        run: |
+          python -c "from robot.audio_io import AudioIO, bt_status, _list_pw_sinks; a = AudioIO(capture_device='Default', playback_device='Default'); assert a._windows_backend is not None; assert isinstance(bt_status(), dict); assert isinstance(_list_pw_sinks(), list); print('Windows audio backend import and device enumeration OK')"
