@@ -8,9 +8,22 @@ from __future__ import annotations
 
 import io
 import os
+import sys
 import threading
 import wave
 from typing import Any
+
+
+def _safe_print(message: str) -> None:
+    """Avoid letting a non-UTF-8 Windows console turn successful I/O into failure."""
+    try:
+        print(message)
+    except UnicodeEncodeError:
+        safe = message.encode("ascii", "backslashreplace").decode("ascii")
+        try:
+            print(safe)
+        except Exception:
+            pass
 
 
 def _get_sounddevice(sd_module=None):
@@ -201,10 +214,10 @@ class WindowsAudioIO:
 
             ok = os.path.exists(out_path) and os.path.getsize(out_path) > 1000
             if ok:
-                print(f"[audio] 已录制 {out_path} ({seconds}s, {used_rate} Hz)")
+                _safe_print(f"[audio] Recorded {out_path} ({seconds}s, {used_rate} Hz)")
             return ok
         except Exception as exc:
-            print(f"[audio] Windows 录音失败：{exc}")
+            _safe_print(f"[audio] Windows recording failed: {exc}")
             return False
 
     def _make_playback(self, data: bytes):
@@ -239,7 +252,7 @@ class WindowsAudioIO:
                 pass
             return True
         except Exception as exc:
-            print(f"[audio] Windows 输出设备探测失败：{exc}")
+            _safe_print(f"[audio] Windows output probe failed: {exc}")
             return False
 
     def play_mp3(self, mp3_bytes: bytes) -> bool:
@@ -301,7 +314,7 @@ class _WindowsPlayback:
                     stream.write(samples[start:start + 4096])
             return not self._cancelled.is_set()
         except Exception as exc:
-            print(f"[audio] Windows 播放失败：{exc}")
+            _safe_print(f"[audio] Windows playback failed: {exc}")
             return False
         finally:
             self._stream = None
