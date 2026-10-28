@@ -1,7 +1,22 @@
+# 网页界面
 streamlit>=1.28.0
-numpy>=1.24.0
-scipy>=1.10.0
+
+# 数值与音频
+# numpy / scipy 必须成对限制上限，否则「切韵对照」会静默失效：
+#   qieyun 0.13 -> qieyun-encoder -> networkx<2.6（实际 2.5.1）仍在用 np.float_，
+#   该属性在 numpy 2.0 已移除，导入 Qieyun 会抛 AttributeError；
+#   而 scipy>=1.14 又要求 numpy>=2，两者无法同时满足无上限安装。
+# 现固定为 numpy 1.26.x + scipy 1.13.x，已验证 Qieyun 可正常导入。
+numpy>=1.24.0,<2.0
+scipy>=1.10.0,<1.14
+
+# 语音合成
 edge-tts>=6.0.0
 gtts>=2.5.0
+
+# 音韵数据（注意：发行包名 qieyun，导入名是大写 Qieyun）
 qieyun>=0.13.0
 pypinyin>=0.50.0
+
+# services/llm_client.py 使用，language.turn_engine 经其间接依赖
+httpx>=0.24.0

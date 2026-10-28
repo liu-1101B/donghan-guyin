@@ -45,11 +45,19 @@ def estimate_ipa_from_pinyin(py):
 def pinyin_analyze_diffs(char):
     return [("拼音回退", "该字未收录东汉音数据库，暂以现代拼音近似")]
 
-try: from Qieyun import 字頭2音韻地位_出處們; QIEYUN_AVAILABLE = True
-except: QIEYUN_AVAILABLE = False
+try:
+    from Qieyun import 字頭2音韻地位_出處們
+    QIEYUN_AVAILABLE, QIEYUN_ERROR = True, None
+except Exception as _qieyun_exc:  # 缺包或 numpy/networkx 版本冲突（np.float_ 已于 numpy 2.0 移除）
+    QIEYUN_AVAILABLE, QIEYUN_ERROR = False, f"{type(_qieyun_exc).__name__}: {_qieyun_exc}"
+    print(f"[guyun_app] 切韵对照不可用 -> {QIEYUN_ERROR}", file=sys.stderr)
 
-try: import edge_tts; EDGE_TTS_AVAILABLE = True
-except: EDGE_TTS_AVAILABLE = False
+try:
+    import edge_tts
+    EDGE_TTS_AVAILABLE, EDGE_TTS_ERROR = True, None
+except Exception as _tts_exc:
+    EDGE_TTS_AVAILABLE, EDGE_TTS_ERROR = False, f"{type(_tts_exc).__name__}: {_tts_exc}"
+    print(f"[guyun_app] 现代朗读（Edge-TTS）不可用 -> {EDGE_TTS_ERROR}", file=sys.stderr)
 
 PINYIN_MAP = {
     "天":"tian","地":"di","人":"ren","日":"ri","月":"yue","风":"feng","云":"yun","雨":"yu",
@@ -218,7 +226,7 @@ col1, col2 = st.columns([2, 3], gap="large")
 with col1:
     input_mode = st.radio("输入类型", ["白话文转古文", "直接输入古文"], horizontal=True, label_visibility="collapsed")
     st.markdown("#### ✍️ 输入文本")
-    input_text = st.text_area("", placeholder="输入现代白话文或文言文…", height=100, label_visibility="collapsed")
+    input_text = st.text_area("输入文本", placeholder="输入现代白话文或文言文…", height=100, label_visibility="collapsed")
 
     # 语调选择器：影响 pitch
     tone_pitch_map = {"平直": 120, "稳重": 130, "昂扬": 150, "悲慨": 100}
@@ -226,6 +234,12 @@ with col1:
     generate_btn = st.button("\U0001f399️ 生成", use_container_width=True, type="primary")
     with st.expander("\U0001f4d6 关于本项目"):
         st.markdown("基于郑张尚芳上古韵体系，以东汉洛阳音为目标音系。数据库当前收录 "+str(len(EASTERN_HAN_DB))+" 字。")
+        # 降级说明：这两项依赖缺失时界面不会报错，但相应功能会整块消失，必须显式告知
+        if not QIEYUN_AVAILABLE:
+            st.caption(f"⚠️ 切韵对照不可用：{QIEYUN_ERROR}")
+            st.caption("安装提示：`pip install -r requirements.txt`（numpy<2 与 scipy<1.14 需同时满足）")
+        if not EDGE_TTS_AVAILABLE:
+            st.caption(f"⚠️ 现代朗读不可用：{EDGE_TTS_ERROR}")
 
 with col2:
     if generate_btn and input_text.strip():

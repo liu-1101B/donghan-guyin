@@ -1,6 +1,10 @@
 streamlit>=1.28.0
-numpy>=1.24.0
-scipy>=1.10.0
+
+# 与根目录 requirements.txt 保持一致的上限，原因见那里：
+# qieyun -> networkx<2.6 依赖 numpy<2，scipy>=1.14 却要求 numpy>=2。
+numpy>=1.24.0,<2.0
+scipy>=1.10.0,<1.14
+
 edge-tts>=6.0.0
 gtts>=2.5.0
 qieyun>=0.13.0
