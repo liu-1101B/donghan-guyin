@@ -1,13 +1,14 @@
 """
 services/llm_client.py
-文言文翻译与回答服务
+文言文翻译与回答服务。
 
-generate_turn(text, history) -> {"translation": ..., "reply": ...}
+LLM_PROVIDER 可选：
+- auto：本机/局域网模型服务 -> 配置好的云端 API -> 本地规则
+- local：只访问 LOCAL_LLM_BASE（本机或局域网模型服务）
+- cloud：只访问 LLM_BASE_URL
+- rules：不访问模型服务，仅使用本地词典/规则
 
-优先级：
-1. 本地 llama-server（默认 http://127.0.0.1:8080，Qwen3-30B-A3B，无需密钥）
-2. 配置 LLM_API_KEY 时回退到云端 OpenAI 兼容接口
-3. 都不可用时本地规则回退（词典翻译 + 固定文言应答）
+所有模型服务使用 OpenAI Chat Completions 兼容接口。
 """
 import ipaddress
 import json
