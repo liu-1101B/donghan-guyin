@@ -728,8 +728,9 @@ with col2:
     elif res:
         # 元信息（一行，替代徽章堆）
         src = res["source"]
-        src_name = {"local-qwen": "本地 Qwen", "cloud": "云端",
-                    "local-rules": "本地规则", "fallback": "兜底"} \
+        src_name = {"local-qwen": "本地 Qwen", "local-model": "模型服务",
+                    "cloud": "云端", "local-rules": "本地规则",
+                    "fallback": "兜底"} \
             .get(src.split("+")[0], src)
         if "ancient_fallback" in src:
             src_name += " · 古韵兜底"
