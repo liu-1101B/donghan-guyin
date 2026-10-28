@@ -35,24 +35,11 @@ except ImportError:
     def _to_simplified(text: str) -> str:
         return text
 
-# 模型选择：
-# auto  = 优先 OpenAI 兼容模型服务，失败后尝试云端，最后规则回退
-# local = 只调用 LOCAL_LLM_BASE（可为本机，也可为局域网/自建服务器）
-# cloud = 只调用 LLM_BASE_URL，不尝试本机模型
-# rules = 不访问任何模型服务，只用内置词典/规则
-LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "auto").strip().lower()
-
-# OpenAI 兼容模型服务。默认是本机 llama-server，也可指向局域网远程服务器。
-LOCAL_BASE = os.environ.get("LOCAL_LLM_BASE", "http://127.0.0.1:8080/v1").rstrip("/")
-LOCAL_MODEL = os.environ.get("LOCAL_LLM_MODEL", "")  # 空 = 使用服务端默认模型
-LOCAL_API_KEY = os.environ.get("LOCAL_LLM_API_KEY", "")
-
-# 云端 OpenAI 兼容接口
+# 可选的大模型 API：填写密钥时调用所配置的 OpenAI 兼容接口；
+# 密钥为空时完全不尝试本地/远程模型，直接使用本地词典应答。
 LLM_BASE = os.environ.get("LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/")
 LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-4o-mini")
 API_KEY = os.environ.get("LLM_API_KEY", "") or os.environ.get("OPENAI_API_KEY", "")
-
-_VALID_PROVIDERS = {"auto", "local", "cloud", "rules"}
 
 # 本地回退用的固定应答语料（常见意图 → (文言应答, 白话应答)）
 _LOCAL_REPLIES = [
@@ -98,15 +85,22 @@ _DEFAULT_REPLY_MODERN = "说得好。你的话我听到了，想听听更多。"
 
 
 def _local_fallback(text: str):
-    """规则回退：词典翻译 + 意图匹配应答（含白话版）"""
+    """无 API 时只使用本地词典/预设应答；没有命中就不编造回答。"""
     translation = simple_translate(text)
-    reply, reply_modern = _DEFAULT_REPLY, _DEFAULT_REPLY_MODERN
     for keys, canned, modern in _LOCAL_REPLIES:
         if any(k in text for k in keys):
-            reply, reply_modern = canned, modern
-            break
-    return {"translation": translation, "reply": reply,
-            "reply_modern": reply_modern}
+            return {
+                "translation": translation,
+                "reply": canned,
+                "reply_modern": modern,
+                "source": "local-dictionary",
+            }
+    return {
+        "translation": translation,
+        "reply": "",
+        "reply_modern": "",
+        "source": "local-dictionary-miss",
+    }
 
 
 def _extract_json(raw: str, original_text: str) -> dict:
@@ -176,54 +170,24 @@ def _call_chat(base: str, model: str, text: str, history, key="", timeout=120.0)
     return _extract_json(content, text)
 
 
-def _selected_provider() -> str:
-    """Return a safe provider mode; invalid values fall back to auto."""
-    provider = LLM_PROVIDER
-    if provider not in _VALID_PROVIDERS:
-        print(f"[llm] 未知 LLM_PROVIDER={provider!r}，改用 auto")
-        return "auto"
-    return provider
-
-
 def generate_turn(text: str, history=None) -> dict:
-    """统一入口：按 LLM_PROVIDER 调用模型，失败时退回内置规则。
+    """两条路线：配置 API 则调用大模型，否则只用本地词典/预设应答。
 
-    auto: local-compatible endpoint -> cloud (if configured) -> rules
-    local: LOCAL_LLM_BASE only (it may point to a LAN model server)
-    cloud: LLM_BASE_URL only
-    rules: skip all network model calls
+    API 调用失败时也退回词典；词典未命中则 reply 为空，调用方应只播放
+    translation 对应的古汉语音频，不要填充默认回答。
     """
-    provider = _selected_provider()
     out = None
-
-    if provider in {"auto", "local"}:
+    if API_KEY:
         try:
-            out = _call_chat(
-                LOCAL_BASE, LOCAL_MODEL, text, history,
-                key=LOCAL_API_KEY, timeout=120.0,
-            )
-            out["source"] = "local-model"
+            out = _call_chat(LLM_BASE, LLM_MODEL, text, history,
+                             key=API_KEY, timeout=60.0)
+            out["source"] = "cloud"
         except Exception as e:
-            print(f"[llm] 模型服务 {LOCAL_BASE} 不可用: {e.__class__.__name__}")
+            print(f"[llm] 云端 API 调用失败，改用本地词典：{e.__class__.__name__}")
 
-    if out is None and provider in {"auto", "cloud"}:
-        if API_KEY:
-            try:
-                out = _call_chat(
-                    LLM_BASE, LLM_MODEL, text, history,
-                    key=API_KEY, timeout=60.0,
-                )
-                out["source"] = "cloud"
-            except Exception as e:
-                print(f"[llm] 云端模型调用失败: {e.__class__.__name__}")
-        else:
-            print("[llm] 未配置云端 API 密钥；如需云端模型，请设置 LLM_API_KEY")
-
-    # rules mode is explicitly offline; auto/local/cloud all degrade here on failure.
     if out is None:
         out = _local_fallback(text)
-        out["source"] = "local-rules"
-    # 繁体 → 简体（古韵库字表为简体）
+# 繁体 → 简体（古韵库字表为简体）
     out["translation"] = _to_simplified(out.get("translation", ""))
     out["reply"] = _to_simplified(out["reply"])
     out["reply_modern"] = _to_simplified(out.get("reply_modern", ""))
