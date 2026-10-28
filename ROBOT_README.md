@@ -57,6 +57,28 @@ Windows 使用原生音频后端（`sounddevice/PortAudio`），不需要安装 
 
 若 Windows 录音/播放失败，请先检查 Windows「声音设置」中默认输入/输出设备，再确认 `sounddevice` 已安装。Linux/Jetson 的 PipeWire/ALSA 逻辑保持不变。
 
+## 没有本地大模型的设备
+
+此项目的大模型不是音韵数据和音频合成模块本身；它只负责白话转译、文言应答和现代语义生成。部署到没有本地 Qwen/llama-server 的 Windows 或 Linux 设备时，可以将推理切换到云端，或连接局域网内另一台自建模型服务器。无需为了运行界面而把大模型装到每台设备。
+
+在仓库根目录复制 `.env.example` 为 `.env`，然后配置 `LLM_PROVIDER`：
+
+- `cloud`：直连云端 OpenAI 兼容接口。设置 `LLM_BASE_URL`、`LLM_MODEL`、`LLM_API_KEY`。
+- `local`：仅使用 `LOCAL_LLM_BASE`；这个地址可以是局域网的模型服务器，必要时配置 `LOCAL_LLM_MODEL` 与 `LOCAL_LLM_API_KEY`。
+- `auto`：先试 `LOCAL_LLM_BASE`，不可用时再试已配置的云端 API，然后降级到本地规则。此为默认值。
+- `rules`：完全跳过模型请求，只使用预设规则。
+
+例如没有本地模型且要直接使用云端服务：
+
+```dotenv
+LLM_PROVIDER=cloud
+LLM_BASE_URL=https://api.openai.com/v1
+LLM_MODEL=gpt-4o-mini
+LLM_API_KEY=你的服务密钥
+```
+
+地址和模型名称请按你实际使用的服务商填写。真实 API 密钥只存放在本地 `.env`，不要提交到版本库。云端模式会把本轮输入和近期对话上下文发送给服务商；若不允许数据离开设备，应改用本地/局域网模型。无本地模型且没有可用云端配置时，程序会降级到固定规则回答，交互能力会明显下降。
+
 ## 安装
 
 ```bash
