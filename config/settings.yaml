@@ -1,4 +1,4 @@
-# 东汉古音机器人配置
+# 东汉古韵机器人配置
 # 设备编号按本机 Jetson AGX Orin 实测填写（arecord/aplay -l 查看）
 
 audio:
@@ -17,7 +17,7 @@ session:
 
 voice:
   default_mode: natural   # natural | ancient（可用 m 键运行时切换）
-  pitch: 130              # 古音合成基频（Hz）
+  pitch: 130              # 古韵合成基频（Hz）
 
 asr:
   backend: local        # local = Vosk 本地模型；云端接口见 services/asr_client.py
