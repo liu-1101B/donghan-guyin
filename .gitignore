@@ -18,3 +18,5 @@ audio_out/
 nv-bluetooth-service.conf.bak
 .reload_state.json
 .server.log
+.robot_preferences.json
+.robot_preferences.json.tmp
