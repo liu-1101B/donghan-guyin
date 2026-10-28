@@ -20,22 +20,34 @@
 
 从 Releases 下载 `古韵合成器_Setup_v3.0.0.exe`，双击安装即可。
 
-### 方式二：双击运行（开发调试）
+### 方式二：Windows 运行机器人新版界面（推荐）
 
+双击仓库根目录的 `start.bat`。它会创建独立的 `.venv`、安装 `requirements-robot.txt`，然后启动 `robot/app.py`（机器人新版界面）。首次启动会询问是否下载约 44 MB 的 Vosk 中文识别模型；不下载时，文字输入与语音合成仍可使用，录音转文字暂不可用。
+
+也可以在命令行执行：
+
+```bat
+start.bat
 ```
-双击 start.bat
-```
 
-首次运行会自动安装依赖，之后浏览器打开 `http://localhost:8501`。
+浏览器地址通常是 `http://localhost:8501`。若端口被占用，请使用 Streamlit 终端输出的实际地址。
 
-### 方式三：命令行
+### 方式三：Windows 运行独立合成器旧界面
+
+双击 `start_synthesizer.bat`，启动根目录的 `guyun_app.py`。它与机器人新版界面是两个不同入口。
+
+### 方式四：Linux / Jetson 运行机器人界面
 
 ```bash
 git clone https://github.com/liu-1101B/donghan-guyin
 cd donghan-guyin
-pip install -r requirements.txt
-streamlit run guyun_app.py
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-robot.txt
+streamlit run robot/app.py
 ```
+
+Windows 机器人界面的麦克风/扬声器通过 `sounddevice` 访问系统音频设备；Linux/Jetson 继续使用现有的 PipeWire/ALSA 音频链路。
 
 ---
 
