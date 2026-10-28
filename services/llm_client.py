@@ -9,9 +9,11 @@ generate_turn(text, history) -> {"translation": ..., "reply": ...}
 2. 配置 LLM_API_KEY 时回退到云端 OpenAI 兼容接口
 3. 都不可用时本地规则回退（词典翻译 + 固定文言应答）
 """
+import ipaddress
 import json
 import os
 import re
+from urllib.parse import urlparse
 
 import httpx
 
@@ -137,6 +139,23 @@ def _build_messages(text: str, history):
     return msgs
 
 
+def _trust_env_for_endpoint(base: str) -> bool:
+    """Do not route loopback/private-LAN model traffic through public proxies."""
+    host = (urlparse(base).hostname or "").strip("[]").lower()
+    if not host:
+        return True
+    if host == "localhost" or host.endswith(".localhost"):
+        return False
+    try:
+        address = ipaddress.ip_address(host)
+        if address.is_loopback or address.is_private or address.is_link_local:
+            return False
+    except ValueError:
+        # Hostnames such as jetson.local can opt out through standard NO_PROXY.
+        pass
+    return True
+
+
 def _call_chat(base: str, model: str, text: str, history, key="", timeout=120.0):
     headers = {"Content-Type": "application/json"}
     if key:
@@ -145,8 +164,8 @@ def _call_chat(base: str, model: str, text: str, history, key="", timeout=120.0)
                "temperature": 0.7, "max_tokens": 300}
     if model:
         payload["model"] = model
-    # 本机服务不走代理（环境里的 ALL_PROXY 指向不稳定的本地代理）
-    trust_env = "127.0.0.1" not in base and "localhost" not in base
+    # Local/LAN inference should not accidentally go via the user's public proxy.
+    trust_env = _trust_env_for_endpoint(base)
     # 限制连接阶段等待时间；模型生成本身仍可使用较长读取超时。
     timeout_cfg = httpx.Timeout(timeout, connect=min(5.0, timeout))
     r = httpx.post(f"{base}/chat/completions", headers=headers,
