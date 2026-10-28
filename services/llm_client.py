@@ -167,20 +167,28 @@ def _call_chat(base: str, model: str, text: str, history, key="", timeout=120.0)
     return _extract_json(content, text)
 
 
-def generate_turn(text: str, history=None) -> dict:
-    """两条路线：配置 API 则调用大模型，否则只用本地词典/预设应答。
+def generate_turn(text: str, history=None, mode: str = None) -> dict:
+    """两条明确路线：mode='api' 用大模型；mode='dictionary' 只查本地词典。
 
-    API 调用失败时也退回词典；词典未命中则 reply 为空，调用方应只播放
-    translation 对应的古汉语音频，不要填充默认回答。
+    mode=None 时供命令行调用：已配置密钥则用 API，否则用词典。
+    API 调用失败会回退词典；词典未命中时 reply/reply_modern 均为空，
+    上层必须只播放 translation 的古汉语音频，不得补造默认回答。
     """
+    selected = (mode or ("api" if API_KEY else "dictionary")).strip().lower()
+    if selected not in {"api", "dictionary"}:
+        selected = "dictionary"
+
     out = None
-    if API_KEY:
-        try:
-            out = _call_chat(LLM_BASE, LLM_MODEL, text, history,
-                             key=API_KEY, timeout=60.0)
-            out["source"] = "cloud"
-        except Exception as e:
-            print(f"[llm] 云端 API 调用失败，改用本地词典：{e.__class__.__name__}")
+    if selected == "api":
+        if not API_KEY:
+            print("[llm] 当前选择大模型 API 模式，但未配置 LLM_API_KEY；改用本地词典")
+        else:
+            try:
+                out = _call_chat(LLM_BASE, LLM_MODEL, text, history,
+                                 key=API_KEY, timeout=60.0)
+                out["source"] = "cloud"
+            except Exception as e:
+                print(f"[llm] 云端 API 调用失败，改用本地词典：{e.__class__.__name__}")
 
     if out is None:
         out = _local_fallback(text)
