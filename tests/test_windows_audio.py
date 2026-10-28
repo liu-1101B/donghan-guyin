@@ -2,18 +2,40 @@
 import io
 import unittest
 import wave
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
-from robot.windows_audio import list_output_devices, resolve_device, _wav_to_int16
+from robot.windows_audio import (
+    WindowsAudioIO, list_output_devices, resolve_device, _wav_to_int16,
+)
 
 
 class _FakeDefault:
     device = (0, 1)
 
 
+class _FakeOutputStream:
+    def __init__(self, owner):
+        self.owner = owner
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def write(self, samples):
+        self.owner.written_frames += len(samples)
+
+    def abort(self):
+        return None
+
+
 class _FakeSoundDevice:
     default = _FakeDefault()
 
     def __init__(self):
+        self.written_frames = 0
         self.devices = [
             {"name": "USB Microphone", "max_input_channels": 1,
              "max_output_channels": 0, "default_samplerate": 48000},
@@ -31,6 +53,13 @@ class _FakeSoundDevice:
         if kind == "output":
             return self.devices[self.default.device[1]]
         return self.devices
+
+    def rec(self, frames, samplerate, channels, dtype, device, blocking):
+        import numpy as np
+        return np.zeros((frames, channels), dtype=np.int16)
+
+    def OutputStream(self, **kwargs):
+        return _FakeOutputStream(self)
 
 
 class WindowsAudioDeviceTests(unittest.TestCase):
@@ -69,6 +98,33 @@ class WindowsAudioDeviceTests(unittest.TestCase):
         self.assertEqual((sample_rate, channels), (16000, 1))
         self.assertEqual(samples.shape, (3, 1))
         self.assertEqual(samples.dtype.name, "int16")
+
+    def test_windows_record_writes_a_valid_wav(self):
+        with patch.dict("sys.modules", {"sounddevice": self.sd}):
+            audio = WindowsAudioIO(
+                capture_device="USB Microphone", playback_device="Speakers",
+                sample_rate=16000,
+            )
+            with TemporaryDirectory() as folder:
+                path = folder + "/captured.wav"
+                self.assertTrue(audio.record(0.05, path))
+                with wave.open(path, "rb") as wf:
+                    self.assertEqual(wf.getnchannels(), 1)
+                    self.assertEqual(wf.getsampwidth(), 2)
+                    self.assertEqual(wf.getframerate(), 16000)
+                    self.assertGreater(wf.getnframes(), 0)
+
+    def test_windows_playback_stream_receives_pcm_frames(self):
+        with patch.dict("sys.modules", {"sounddevice": self.sd}):
+            audio = WindowsAudioIO(playback_device="Speakers (USB Audio)")
+            buf = io.BytesIO()
+            with wave.open(buf, "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(16000)
+                wf.writeframes(b"\x01\x00" * 5000)
+            self.assertTrue(audio.play_wav(buf.getvalue()))
+            self.assertEqual(self.sd.written_frames, 5000)
 
 
 if __name__ == "__main__":
