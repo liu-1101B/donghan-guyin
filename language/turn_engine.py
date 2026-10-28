@@ -2,7 +2,7 @@
 language/turn_engine.py
 单轮对话统一处理：
 
-    用户文本 → LLM(translation+reply) → 语音路由(自然/古音) → 音频字节
+    用户文本 → LLM(translation+reply) → 语音路由(自然/古韵) → 音频字节
 
 不直接碰麦克风与扬声器，只负责"文本进、音频出"。
 """
@@ -14,7 +14,7 @@ from language.ancient_tts import synthesize_ancient, db_coverage
 
 
 MODE_NATURAL = "natural"    # 自然语音（Edge TTS 普通话）
-MODE_ANCIENT = "ancient"    # 东汉古音（音韵库 + 合成器）
+MODE_ANCIENT = "ancient"    # 东汉古韵（音韵库 + 合成器）
 
 
 @dataclass
@@ -27,7 +27,7 @@ class Turn:
     mode: str = ""            # natural | ancient
     audio: bytes = b""        # mp3 或 wav
     audio_kind: str = ""      # "mp3" | "wav"
-    coverage_pct: float = 100.0   # 古音模式覆盖率；自然模式恒 100
+    coverage_pct: float = 100.0   # 古韵模式覆盖率；自然模式恒 100
     approx_chars: int = 0
     error: Optional[str] = None
 
@@ -40,9 +40,9 @@ def make_turn(user_text: str, mode: str = MODE_NATURAL,
 
     voice : 自然语音的 Edge TTS 音色 id（None=用默认）
     rate  : 自然语音语速（如 "-10%"；None=用默认）
-    speed : 古音语速倍率（1.0 正常；None=用默认）
-    pitch : 古音基频 Hz（两种模式下都生效：古音直接合成，
-            自然模式断网回退古音时同样使用）
+    speed : 古韵语速倍率（1.0 正常；None=用默认）
+    pitch : 古韵基频 Hz（两种模式下都生效：古韵直接合成，
+            自然模式断网回退古韵时同样使用）
     """
     turn = Turn(user_text=user_text, translation="", reply="",
                 reply_modern="", source="", mode=mode,
@@ -78,7 +78,7 @@ def make_turn(user_text: str, mode: str = MODE_NATURAL,
             turn.coverage_pct = result.coverage_pct
             turn.approx_chars = result.approx
         else:
-            # 古音合成失败 → 回退自然语音
+            # 古韵合成失败 → 回退自然语音
             mp3 = tts_client.speak_natural(turn.reply, voice=voice, rate=rate)
             if mp3:
                 turn.audio, turn.audio_kind = mp3, "mp3"
@@ -90,7 +90,7 @@ def make_turn(user_text: str, mode: str = MODE_NATURAL,
         if mp3:
             turn.audio, turn.audio_kind = mp3, "mp3"
         else:
-            # Edge TTS 不可用（断网）→ 回退本地古音合成
+            # Edge TTS 不可用（断网）→ 回退本地古韵合成
             wav, result = synthesize_ancient(turn.reply, pitch=pitch,
                                              speed=speed or 1.0)
             if wav:

@@ -23,7 +23,7 @@ try:
     _T2S = OpenCC("t2s")
 
     def _to_simplified(text: str) -> str:
-        # 模型偶发输出繁体，古音库是简体字表 → 统一转简体
+        # 模型偶发输出繁体，古韵库是简体字表 → 统一转简体
         try:
             return _T2S.convert(text)
         except Exception:
@@ -164,11 +164,11 @@ def generate_turn(text: str, history=None) -> dict:
     if out is None:
         out = _local_fallback(text)
         out["source"] = "local-rules"
-    # 繁体 → 简体（古音库字表为简体）
+    # 繁体 → 简体（古韵库字表为简体）
     out["translation"] = _to_simplified(out.get("translation", ""))
     out["reply"] = _to_simplified(out["reply"])
     out["reply_modern"] = _to_simplified(out.get("reply_modern", ""))
-    # 限制长度，防止生僻字/长句拉低古音覆盖率
+    # 限制长度，防止生僻字/长句拉低古韵覆盖率
     if len(out["reply"]) > MAX_REPLY_CHARS:
         out["reply"] = out["reply"][:MAX_REPLY_CHARS]
     return out

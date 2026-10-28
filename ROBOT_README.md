@@ -1,7 +1,7 @@
-# 东汉古音机器人（Jetson AGX Orin）
+# 东汉古韵机器人（Jetson AGX Orin）
 
 在 Jetson AGX Orin 上运行的语音交互机器人：
-**采音 → 语音识别 → 文言文翻译与回答 → 自然语音 / 东汉古音 双模式播放**。
+**采音 → 语音识别 → 文言文翻译与回答 → 自然语音 / 东汉古韵 双模式播放**。
 
 不重写原项目核心：`phonology_db.py`、`sound_synth.py`、`classical_translator.py` 原样保留；
 `guyun_app.py` 继续作为网页调试界面。机器人在其外层新增 `robot/`、`services/`、`language/` 三层。
@@ -28,7 +28,7 @@
  语音路由 (robot/voice_router.py, m 键运行时切换)
    ┌──────────────┴──────────────┐
    ▼                             ▼
- 自然语音                    东汉古音
+ 自然语音                    东汉古韵
  Edge TTS (zh-CN-YunxiNeural)  汉字 → lookup_char() → IPA
  → MP3                          → synthesize_text() → WAV
    └──────────────┬──────────────┘
@@ -72,7 +72,7 @@ python -m robot.main --selftest
 
 # 2) 交互模式（按键说话）
 python -m robot.main                # 默认自然语音
-python -m robot.main --mode ancient # 默认东汉古音
+python -m robot.main --mode ancient # 默认东汉古韵
 
 # 3) 免麦克风测试
 python -m robot.main --text "今天天气真好"
@@ -92,7 +92,7 @@ streamlit run robot/app.py
 |---|---|
 | 空行 (Enter) | 录音 5 秒并处理 |
 | 直接输入文字 | 免麦克风，直接处理 |
-| `m` | 切换 自然语音 / 东汉古音（无需重启） |
+| `m` | 切换 自然语音 / 东汉古韵（无需重启） |
 | `r` | 重播上一条回答 |
 | `c` | 清空对话历史 |
 | `q` | 退出 |
@@ -197,7 +197,7 @@ robot/
 ├── bt_connect.sh    # 蓝牙音箱：连接 + 设为默认输出 + 音量校正
 ├── bt_reset.sh      # A2DP 恢复：断开→重连→设默认输出→测试音自检
 ├── session.py       # 多轮对话状态（默认保留 8 轮）
-└── voice_router.py  # 自然语音 / 东汉古音 运行时切换（持有音色/语速参数）
+└── voice_router.py  # 自然语音 / 东汉古韵 运行时切换（持有音色/语速参数）
 
 services/
 ├── asr_client.py    # 本地 Vosk 识别（自动重采样/降声道），云端接口预留
@@ -226,16 +226,16 @@ config/settings.yaml # 音频设备、对话容量、默认模式
 | `probe(timeout=6)` | robot/audio_io.py | — | 通道是否活着（False=假连接） |
 | `bt_status(mac)` | robot/audio_io.py | — | 蓝牙快照 `{connected, sink_id, sink_name, is_default}` |
 
-## 关于"东汉古音"的说明
+## 关于"东汉古韵"的说明
 
-古音模式是**音韵学近似复原**：查东汉音韵库（当前约 703 字）得到重构 IPA，
+古韵模式是**音韵学近似复原**：查东汉音韵库（当前约 703 字）得到重构 IPA，
 再用 eSpeak-ng/共振峰合成。它不是历史录音级别的还原。
 每轮会报告覆盖率（已收录字数 / 总字数）；未收录字走现代拼音近似，
 提示词已限制模型少用生僻字、控制回复长度。
 
 ## 已知限制与后续
 
-- 当前网络环境 DNS/代理不稳定：Edge TTS 自动在"代理→直连"间回退；断网时自然语音自动回退本地古音合成。
+- 当前网络环境 DNS/代理不稳定：Edge TTS 自动在"代理→直连"间回退；断网时自然语音自动回退本地古韵合成。
 - 小模型 Vosk 词汇有限，识别偶有错字（"天朗气清"→"天冷起清"）；后续可换 vosk 大模型或云端 ASR。
 - 播放通道：`pw-play` 优先（走 PipeWire 默认输出，自动跟随当前设备，如蓝牙音箱），
   回退 `aplay -D plughw:2,0` 直连。想换音箱/耳机只需 `wpctl set-default <sink>`，

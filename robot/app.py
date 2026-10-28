@@ -1,6 +1,6 @@
 """
 robot/app.py
-东汉古音机器人 · 使用界面（Streamlit，风格对齐原项目 guyun_app.py）
+东汉古韵机器人 · 使用界面（Streamlit，风格对齐原项目 guyun_app.py）
 
 启动：
     cd donghan-guyin && source .venv/bin/activate
@@ -9,8 +9,8 @@ robot/app.py
 
 功能：
     - 输入白话文/古文（或点按钮录 5 秒麦克风），Qwen 生成文言应答
-    - 模式：自然语音（Edge TTS）/ 东汉古音（音韵库合成）
-    - 可调：音色（自然模式）、语速（两模式各自）、语调基频（古音模式）
+    - 模式：自然语音（Edge TTS）/ 东汉古韵（音韵库合成）
+    - 可调：音色（自然模式）、语速（两模式各自）、语调基频（古韵模式）
     - 浏览器内播放 + 一键"设备播放"（走 PipeWire 默认输出，如蓝牙音箱）
     - 多轮对话历史（默认 8 轮）
 """
@@ -118,8 +118,8 @@ def _gen_worker(job, session, cfg):
     """后台线程：LLM 生成 + 三类语音合成 + 自动朗读，结果只写进 job。
 
     一次生成三段音频（互不干扰，各占独立播放对象）：
-      user      我的话·东汉古音（文言翻译，无翻译则用原话）
-      reply_anc 回答·东汉古音
+      user      我的话·东汉古韵（文言翻译，无翻译则用原话）
+      reply_anc 回答·东汉古韵
       reply_mod 回答·现代汉语（Edge TTS，需网络；失败则该段为空+说明）
     线程内不碰 st.session_state / st.*（避免跨线程上下文问题），
     所有状态落盘由主线程的轮询 fragment 在 result 就绪时统一完成。
@@ -167,7 +167,7 @@ def _gen_worker(job, session, cfg):
         (wav_u, _), (wav_r, result_r), (mp3_m, _) = (
             done["user"], done["reply_anc"], done["reply_mod"])
         if not wav_r:
-            # 古音合成失败（极个别文本）→ 标注兜底，不装腔
+            # 古韵合成失败（极个别文本）→ 标注兜底，不装腔
             source = f"{source}+ancient_fallback"
 
         job["result"] = ("ok", {
@@ -187,8 +187,8 @@ def _gen_worker(job, session, cfg):
             },
             "ms": time.time(),
         })
-        # 自动朗读：按模式选主段（自然语音→现代段；东汉古音→古音段），
-        # 主段缺失时按 古音回答 → 现代回答 → 我的话 顺序退
+        # 自动朗读：按模式选主段（自然语音→现代段；东汉古韵→古韵段），
+        # 主段缺失时按 古韵回答 → 现代回答 → 我的话 顺序退
         job["phase"] = "play"
         a = job["result"][1]["audios"]
         pref = a["reply_mod"] if cfg["mode"] == "natural" else a["reply_anc"]
@@ -348,7 +348,7 @@ def _ensure_playable(ai, spinner=True):
 
 
 # ---------- 页面（简约素雅版） ----------
-st.set_page_config(page_title="古音机器人 · 东汉洛阳官音",
+st.set_page_config(page_title="古韵机器人 · 东汉洛阳官音",
                    page_icon="🏛️", layout="wide")
 
 st.markdown("""
@@ -491,7 +491,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="gi-title">古音</div>', unsafe_allow_html=True)
+st.markdown('<div class="gi-title">古韵</div>', unsafe_allow_html=True)
 st.markdown('<div class="gi-sub">东汉 · 洛阳官音 · QWEN 对谈</div>', unsafe_allow_html=True)
 
 if st.session_state.get("_reload_warn"):
@@ -569,7 +569,7 @@ with col1:
             pass
 
     st.markdown('<div class="gi-h">语音模式</div>', unsafe_allow_html=True)
-    st.radio("模式", ["自然语音", "东汉古音"],
+    st.radio("模式", ["自然语音", "东汉古韵"],
              index=0 if router.mode == "natural" else 1,
              horizontal=True, label_visibility="collapsed", key="robot_mode")
 
@@ -584,7 +584,7 @@ with col1:
             st.slider("语速", 0.5, 2.0, 1.0, 0.1, format="×%.1f", key="robot_speed")
             st.slider("基频（Hz，越低越沉）", 80, 180, int(router.pitch), 5,
                       key="robot_pitch")
-            st.caption("语速与基频仅东汉古音模式生效。")
+            st.caption("语速与基频仅东汉古韵模式生效。")
 
     def _generate():
         """登记后台任务并立即返回（LLM+TTS 在后台线程跑，
@@ -604,7 +604,7 @@ with col1:
         cfg = {
             "text": text,
             "mode": mode,
-            "mode_label": "自然语音" if mode == "natural" else "东汉古音",
+            "mode_label": "自然语音" if mode == "natural" else "东汉古韵",
             "voice": name_to_id.get(ss.get("robot_voice"), voice_ids[0]),
             "rate": f"{int(ss.get('robot_rate', -10)):+d}%",
             "speed": float(ss.get("robot_speed", 1.0)),
@@ -630,8 +630,8 @@ with col1:
 
     with st.expander("关于本项目"):
         st.markdown(f"""- 对话引擎：本地 Qwen3-30B-A3B（llama-server :8080）
-- 东汉古音库：{len(EASTERN_HAN_DB)} 字（郑张尚芳体系，洛阳官音重建）
-- 自然语音：Edge TTS（需网络，断网回退古音合成）
+- 东汉古韵库：{len(EASTERN_HAN_DB)} 字（郑张尚芳体系，洛阳官音重建）
+- 自然语音：Edge TTS（需网络，断网回退古韵合成）
 - 设备播放：PipeWire 默认输出（蓝牙），异常自动重连
 - 多轮对话：保留最近 {session.max_turns} 轮上下文""")
 
@@ -647,7 +647,7 @@ with col2:
         "qwen": "构思文言应答…",
         "synth": "合成语音…",
         "synth_user": "合成语音中 · 我的话…",
-        "synth_reply_anc": "合成语音中 · 古音回答…",
+        "synth_reply_anc": "合成语音中 · 古韵回答…",
         "synth_reply_mod": "合成语音中 · 现代回答…",
         "play": "准备朗读…",
     }
@@ -675,7 +675,7 @@ with col2:
                 st.markdown(
                     f'<div class="gi-loading">{echo_html}'
                     f'<div class="gi-loading-body">'
-                    f'<div class="gi-loading-seal">音</div>'
+                    f'<div class="gi-loading-seal">韵</div>'
                     f'<div class="gi-loading-text">'
                     f'<div class="gi-loading-phase">{label}'
                     f'<span class="gi-dot"><i></i><i></i><i></i></span></div>'
@@ -696,7 +696,7 @@ with col2:
         session.add(payload["user"], payload["reply"])   # LLM 上下文
         ss.last_result = payload
         ss.turns.append((payload["user"], payload["reply"],
-                         "自然语音" if payload["mode"] == "natural" else "东汉古音"))
+                         "自然语音" if payload["mode"] == "natural" else "东汉古韵"))
         ss.turns = ss.turns[-session.max_turns:]
         vol = job.get("vol_note")
         if job.get("play_ok") is True:
@@ -720,10 +720,10 @@ with col2:
                     "local-rules": "本地规则", "fallback": "兜底"} \
             .get(src.split("+")[0], src)
         if "ancient_fallback" in src:
-            src_name += " · 古音兜底"
-        meta = f'模式 {res["mode"] if res["mode"] == "natural" else "东汉古音"} · 来源 {src_name}'
+            src_name += " · 古韵兜底"
+        meta = f'模式 {res["mode"] if res["mode"] == "natural" else "东汉古韵"} · 来源 {src_name}'
         if res["mode"] == "ancient":
-            meta += f' · 古音覆盖 {res["coverage"]}%'
+            meta += f' · 古韵覆盖 {res["coverage"]}%'
         st.markdown(f'<div class="gi-meta">{meta}</div>', unsafe_allow_html=True)
 
         if res["translation"]:
@@ -735,14 +735,14 @@ with col2:
             st.markdown(f'<div class="gi-muteline">白话：{res["reply_modern"]}</div>',
                         unsafe_allow_html=True)
 
-        # 三段音频（每次生成都产出：我的话·古音 / 回答·古音 / 回答·现代）
+        # 三段音频（每次生成都产出：我的话·古韵 / 回答·古韵 / 回答·现代）
         st.markdown('<div class="gi-h">语音</div>', unsafe_allow_html=True)
         if st.session_state.get("play_note"):
             st.caption(st.session_state.play_note)
         audios = res.get("audios") or {}
         _CARD_ORDER = [
-            ("user", "我的话 · 东汉古音"),
-            ("reply_anc", "回答 · 东汉古音"),
+            ("user", "我的话 · 东汉古韵"),
+            ("reply_anc", "回答 · 东汉古韵"),
             ("reply_mod", "回答 · 现代汉语"),
         ]
         for key, label in _CARD_ORDER:
@@ -786,12 +786,12 @@ with col2:
                     else:
                         st.error("播放通道异常：自动重连后仍无法播放，请检查设备电源/距离")
             with cb2:
-                fname = f"guyin_{key}_{int(res['ms'])}.{item['kind']}"
+                fname = f"guyun_{key}_{int(res['ms'])}.{item['kind']}"
                 st.download_button("下载", item["data"], file_name=fname,
                                    mime=fmt, use_container_width=True,
                                    key=f"dl_{key}")
 
-        # 东汉 IPA（古音模式）
+        # 东汉 IPA（古韵模式）
         if res["mode"] == "ancient":
             r = text_to_ipa(res["reply"])
             st.markdown('<div class="gi-h">东汉洛阳音 IPA</div>',
@@ -799,7 +799,7 @@ with col2:
             st.markdown(f'<div class="gi-ipa">{r.ipa_text}</div>',
                         unsafe_allow_html=True)
 
-        # 逐字音韵分析（古音模式，收进折叠面板）
+        # 逐字音韵分析（古韵模式，收进折叠面板）
         if res["mode"] == "ancient":
             rows = analyze_reply(res["reply"])
             if rows:

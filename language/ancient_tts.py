@@ -1,6 +1,6 @@
 """
 language/ancient_tts.py
-汉字 → 东汉 IPA → 古音 WAV
+汉字 → 东汉 IPA → 古韵 WAV
 
 从 guyun_app.py 抽离的 IPA 组装逻辑（不修改原文件），
 并增加覆盖率统计：已收录字数 / 拼音近似字数。

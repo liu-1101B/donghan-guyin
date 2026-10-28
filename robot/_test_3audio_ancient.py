@@ -1,4 +1,4 @@
-"""AppTest 验证：东汉古音模式下同样产出三段音频 + IPA 区正常"""
+"""AppTest 验证：东汉古韵模式下同样产出三段音频 + IPA 区正常"""
 import sys, time
 sys.path.insert(0, ".")
 import services.tts_client, services.llm_client  # noqa
@@ -14,8 +14,8 @@ at.run(**RUNKW)
 assert not at.exception, at.exception
 print(f"initial render: {time.time()-t0:.1f}s")
 
-# 切到东汉古音（radio[0] 的 label 是"模式"，选项在 options 里）
-at.radio[0].set_value("东汉古音")
+# 切到东汉古韵（radio[0] 的 label 是"模式"，选项在 options 里）
+at.radio[0].set_value("东汉古韵")
 at.run(**RUNKW)
 assert not at.exception, at.exception
 
@@ -50,12 +50,12 @@ print("mode:", res["mode"], "| source:", res["source"],
 print("audios:", {k: (len(v.get("data") or b""), (v.get("text") or "")[:16])
                   for k, v in aud.items()})
 assert res["mode"] == "ancient"
-assert aud.get("user", {}).get("data"), "缺 我的话·古音"
-assert aud.get("reply_anc", {}).get("data"), "缺 回答·古音"
-# IPA 区（古音模式）
+assert aud.get("user", {}).get("data"), "缺 我的话·古韵"
+assert aud.get("reply_anc", {}).get("data"), "缺 回答·古韵"
+# IPA 区（古韵模式）
 md = " ".join(m.value for m in at.markdown)
 assert "东汉洛阳音 IPA" in md, "缺 IPA 区"
 n_audio = sum(1 for v in aud.values() if v.get("data"))
 labels = [b.label for b in at.button]
 assert labels.count("设备播放") == n_audio, "每段音频各应有 设备播放"
-print("\n=== 古音模式三音频测试通过 ===")
+print("\n=== 古韵模式三音频测试通过 ===")

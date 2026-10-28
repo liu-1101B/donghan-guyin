@@ -1,6 +1,6 @@
 """
 robot/voice_router.py
-语音模式路由：自然语音 / 东汉古音，运行时可切换（无需重启）。
+语音模式路由：自然语音 / 东汉古韵，运行时可切换（无需重启）。
 同时持有音色/语速等可调参数，界面上改完直接生效。
 """
 from language.turn_engine import (
@@ -14,10 +14,10 @@ class VoiceRouter:
     def __init__(self, default_mode: str = MODE_NATURAL, pitch: int = 130,
                  voice: str = None, rate: str = None, speed: float = 1.0):
         self.mode = default_mode if default_mode in self.MODES else MODE_NATURAL
-        self.pitch = pitch            # 古音基频 Hz（音色高低）
+        self.pitch = pitch            # 古韵基频 Hz（音色高低）
         self.voice = voice            # 自然语音 Edge TTS 音色 id（None=默认）
         self.rate = rate              # 自然语音语速（None=默认 -10%）
-        self.speed = speed            # 古音语速倍率（1.0=正常）
+        self.speed = speed            # 古韵语速倍率（1.0=正常）
 
     def set_mode(self, mode: str) -> bool:
         if mode not in self.MODES:
@@ -37,4 +37,4 @@ class VoiceRouter:
                          speed=self.speed)
 
     def label(self) -> str:
-        return "自然语音" if self.mode == MODE_NATURAL else "东汉古音"
+        return "自然语音" if self.mode == MODE_NATURAL else "东汉古韵"
