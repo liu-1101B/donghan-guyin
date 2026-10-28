@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - windows-compat-ci-paused
+      - feat/windows-robot-compat
     paths:
       - "robot/**"
       - "services/**"
