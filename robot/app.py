@@ -525,23 +525,23 @@ with col1:
                  height=120, key="robot_input", label_visibility="collapsed")
 
     def _mic_record():
+        model_dir = os.path.join(ROOT, "models", "vosk-small-cn")
+        if not os.path.isdir(model_dir):
+            st.error(
+                "本地语音识别模型尚未安装。文字输入和语音合成功能仍可使用；"
+                "请运行 start.bat 下载模型，或按 README 手动安装到 models/vosk-small-cn。"
+            )
+            return
         ai = get_audio_io()
         rec_path = os.path.join(OUT_DIR, "app_rec.wav")
         if not ai.record(5.0, rec_path):
-            st.toast("录音失败：请检查麦克风", icon="⚠️")
+            st.toast("录音失败：请检查 Windows 麦克风和隐私权限", icon="⚠️")
             return
         try:
             asr = get_asr()
             text = asr.transcribe_wav(rec_path)
         except Exception as exc:
-            model_dir = os.path.join(ROOT, "models", "vosk-small-cn")
-            if not os.path.isdir(model_dir):
-                st.error(
-                    "本地语音识别模型尚未安装。文字输入和语音合成功能仍可使用；"
-                    "请按 README 下载 Vosk 中文模型到 models/vosk-small-cn。"
-                )
-            else:
-                st.error(f"初始化语音识别失败：{exc}")
+            st.error(f"初始化语音识别失败：{exc}")
             return
         if text:
             st.session_state.robot_input = text
