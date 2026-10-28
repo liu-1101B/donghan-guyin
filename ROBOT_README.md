@@ -45,6 +45,18 @@
 - 扬声器：蓝牙音箱（PipeWire 默认输出自动跟随），或把耳机插到 USB 一体机
 - 麦克风/扬声器权限：用户需在 `audio` 组（本机 lab006 已是）
 
+## Windows 10/11 运行
+
+Windows 使用原生音频后端（`sounddevice/PortAudio`），不需要安装 `arecord`、`pw-play` 或 `wpctl`。在仓库根目录双击 `start.bat` 即可创建虚拟环境、安装依赖并启动新版机器人界面 `robot/app.py`。
+
+- 首次启动可选择下载 Vosk 中文模型（约 44 MB），下载后路径应为 `models/vosk-small-cn/`。未安装模型时，文字输入与语音合成功能仍可用，录音转文字不可用。
+- 音频设备默认跟随 Windows 系统默认麦克风和扬声器；左侧「播放设备」可以选择特定输出设备。
+- 默认本地大模型地址为 `http://127.0.0.1:8080`。未启动本地模型时会按 `services/llm_client.py` 的设置尝试云端服务或本地规则兜底。
+- Edge TTS 自然语音需要联网；古韵合成使用本地音韵库。
+- 如只需要独立合成器旧界面，请启动 `start_synthesizer.bat`，它运行的是 `guyun_app.py`，不是机器人界面。
+
+若 Windows 录音/播放失败，请先检查 Windows「声音设置」中默认输入/输出设备，再确认 `sounddevice` 已安装。Linux/Jetson 的 PipeWire/ALSA 逻辑保持不变。
+
 ## 安装
 
 ```bash
