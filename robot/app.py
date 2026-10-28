@@ -809,10 +809,15 @@ with col2:
     elif res:
         # 元信息（一行，替代徽章堆）
         src = res["source"]
-        src_name = {"local-qwen": "本地 Qwen", "local-model": "模型服务",
-                    "cloud": "云端", "local-rules": "本地规则",
-                    "fallback": "兜底"} \
-            .get(src.split("+")[0], src)
+        src_name = {
+            "local-qwen": "本地 Qwen",
+            "local-model": "模型服务",
+            "cloud": "云端大模型",
+            "local-rules": "本地规则",
+            "local-dictionary": "本地词典",
+            "local-dictionary-miss": "词典未匹配",
+            "fallback": "兜底",
+        }.get(src.split("+")[0], src)
         if "ancient_fallback" in src:
             src_name += " · 古韵兜底"
         meta = f'模式 {res["mode"] if res["mode"] == "natural" else "东汉古韵"} · 来源 {src_name}'
