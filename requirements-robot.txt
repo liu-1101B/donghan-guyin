@@ -1,5 +1,5 @@
 # 机器人依赖（核心 + Streamlit 网页界面 robot/app.py）
-# 在 Jetson AGX Orin (Ubuntu 24.04 / Python 3.12 / aarch64) 上验证
+# Linux/Jetson 与 Windows 10/11；Windows 音频使用 sounddevice/PortAudio
 numpy>=1.24.0
 scipy>=1.10.0
 pypinyin>=0.50.0
@@ -20,3 +20,6 @@ opencc-python-reimplemented>=0.1.0
 
 # 网页使用界面（robot/app.py，风格对齐原项目 guyun_app.py）
 streamlit>=1.28.0
+
+# Windows 麦克风/扬声器（Linux 仍使用系统 arecord/pw-play）
+sounddevice>=0.4.6
