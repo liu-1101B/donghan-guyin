@@ -4,6 +4,14 @@ on:
   push:
     branches:
       - feat/historical-phonology-foundation
+    paths:
+      - "language/history/**"
+      - "scripts/**"
+      - "tests/test_historical_phonology.py"
+      - "guyun_app.py"
+      - "data/historical/**"
+      - "docs/HISTORICAL_PHONOLOGY*.md"
+      - "README.md"
   pull_request:
 
 jobs:
