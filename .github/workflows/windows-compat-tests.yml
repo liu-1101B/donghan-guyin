@@ -4,13 +4,14 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - windows-compat-ci-paused
+      - feat/windows-robot-compat
     paths:
       - "robot/**"
       - "services/**"
       - "language/**"
       - "tests/test_windows_audio.py"
       - "tests/test_llm_provider.py"
+      - "tests/test_robot_app_smoke.py"
       - "requirements-robot.txt"
       - ".github/workflows/windows-compat-tests.yml"
   pull_request:
