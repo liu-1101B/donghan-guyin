@@ -79,7 +79,7 @@ def _edge_tts_sync(text: str, voice: str, rate: str = RATE):
 
 
 def speak_natural(text: str, voice: str = VOICE, rate: str = RATE):
-    """文言文 → MP3 字节串。Edge TTS 失败返回 None（调用方可回退到古音合成）。
+    """文言文 → MP3 字节串。Edge TTS 失败返回 None（调用方可回退到古韵合成）。
 
     voice: Edge TTS 音色 id（如 zh-CN-YunxiNeural）
     rate : 语速字符串（如 "-10%" 稍慢，"+10%" 稍快）
