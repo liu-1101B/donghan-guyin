@@ -10,17 +10,39 @@ def get_espeak_path():
     """返回 eSpeak-ng 可执行文件的路径，兼容打包环境及系统安装"""
     # 1. 本应用安装目录下的捆绑版
     app_dir = os.path.dirname(os.path.abspath(__file__))
-    bundled_exe = os.path.join(app_dir, "espeak-ng", "espeak-ng.exe")
-    if os.path.exists(bundled_exe):
-        return bundled_exe
+    bundled_dir = os.path.join(app_dir, "espeak-ng")
+    for name in ("espeak-ng.exe", "espeak_ng.exe"):
+        bundled_exe = os.path.join(bundled_dir, name)
+        if os.path.exists(bundled_exe):
+            return bundled_exe
 
     # 2. MSI 安装路径（64位）
-    msi_path = r"C:\Program Files\eSpeak NG\espeak-ng.exe"
-    if os.path.exists(msi_path):
-        return msi_path
+    for name in ("espeak-ng.exe", "espeak_ng.exe"):
+        msi_path = os.path.join(r"C:\Program Files\eSpeak NG", name)
+        if os.path.exists(msi_path):
+            return msi_path
 
     # 3. 系统 PATH
     return "espeak-ng"
+
+
+def get_espeak_env():
+    """返回调用 eSpeak-ng 所需的环境变量。
+
+    eSpeak-ng 1.52 的 Windows 版找不到 espeak-ng-data 时会直接崩溃
+    （退出码 0xC0000005）而不是报错，因此捆绑版必须显式指定数据目录。
+    已存在的 ESPEAK_DATA_PATH 优先，不覆盖用户设置。
+    """
+    env = os.environ.copy()
+    if env.get("ESPEAK_DATA_PATH"):
+        return env
+
+    exe = get_espeak_path()
+    if os.path.dirname(exe):
+        data_dir = os.path.join(os.path.dirname(exe), "espeak-ng-data")
+        if os.path.isdir(data_dir):
+            env["ESPEAK_DATA_PATH"] = data_dir
+    return env
 
 # ============================================================
 # 引擎 1：eSpeak-ng 调用封装 (返回 numpy 数组)
@@ -87,7 +109,8 @@ def synth_with_espeak(ipa_parts, pitch=130):
             "-w", wav_path,
             input_text
         ]
-        subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=15)
+        subprocess.run(cmd, check=True, capture_output=True, text=True,
+                       timeout=15, env=get_espeak_env())
 
         with wave.open(wav_path, 'rb') as wf:
             n_frames = wf.getnframes()
@@ -410,4 +433,12 @@ if __name__ == "__main__":
             print(f"  {test}: {len(audio)} samples ({len(audio)/22050:.2f}s)")
 
 
-ESPEAK_AVAILABLE = False  # set to True on Windows after installing espeak-ng
+def _detect_espeak():
+    """实际探测一次 eSpeak-ng 是否可用（找不到时 subprocess 会立刻抛异常）。"""
+    try:
+        return synth_with_espeak(["ten"]) is not None
+    except Exception:  # noqa: BLE001
+        return False
+
+
+ESPEAK_AVAILABLE = _detect_espeak()
