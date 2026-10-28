@@ -1,4 +1,4 @@
-"""AppTest 验证：每次生成产出三段音频（我的话古音/回答古音/回答现代）
+"""AppTest 验证：每次生成产出三段音频（我的话古韵/回答古韵/回答现代）
 + 等待区 fragment 正常 + 页面结构无异常。
 Edge TTS 当前网络不可用 → reply_mod 允许为空（UI 显示网络说明）。
 """
@@ -56,9 +56,9 @@ print("audios:", {k: (len(v.get("data") or b""), v.get("kind"),
                      (v.get("text") or "")[:14])
                   for k, v in aud.items()})
 assert res["reply"], "回复为空"
-# 核心断言：两类古音音频必须产出
-assert aud.get("user", {}).get("data"), "缺 我的话·古音"
-assert aud.get("reply_anc", {}).get("data"), "缺 回答·古音"
+# 核心断言：两类古韵音频必须产出
+assert aud.get("user", {}).get("data"), "缺 我的话·古韵"
+assert aud.get("reply_anc", {}).get("data"), "缺 回答·古韵"
 # 现代段：Edge 可用则有数据，断网则空（都不算失败）
 print("reply_mod 字节:", len(aud.get("reply_mod", {}).get("data") or b""))
 print("mode:", res["mode"], "| source:", res["source"],
