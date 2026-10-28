@@ -1,4 +1,5 @@
 """Tests for selecting local, cloud, and rules-only LLM modes."""
+import json
 import unittest
 from unittest.mock import patch
 
@@ -12,7 +13,29 @@ MODEL_REPLY = {
 }
 
 
+class _FakeResponse:
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return {"choices": [{"message": {"content": json.dumps(MODEL_REPLY)}}]}
+
+
 class LLMProviderTests(unittest.TestCase):
+    def test_private_lan_model_endpoint_bypasses_proxy_environment(self):
+        with patch.object(llm.httpx, "post", return_value=_FakeResponse()) as post:
+            llm._call_chat(
+                "http://192.168.1.20:8080/v1", "test-model", "你好", []
+            )
+        self.assertFalse(post.call_args.kwargs["trust_env"])
+
+    def test_public_model_endpoint_can_use_proxy_environment(self):
+        with patch.object(llm.httpx, "post", return_value=_FakeResponse()) as post:
+            llm._call_chat(
+                "https://api.example.invalid/v1", "test-model", "你好", []
+            )
+        self.assertTrue(post.call_args.kwargs["trust_env"])
+
     def test_cloud_mode_skips_local_model_entirely(self):
         with (
             patch.object(llm, "LLM_PROVIDER", "cloud"),
