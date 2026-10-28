@@ -226,14 +226,21 @@ class WindowsAudioIO:
         return True
 
     def probe(self, timeout: float = 6.0) -> bool:
-        import math
-        sample_rate = 16000
-        count = int(sample_rate * 0.3)
-        pcm = bytearray()
-        for i in range(count):
-            value = int(3000 * math.sin(2 * math.pi * 300 * i / sample_rate))
-            pcm.extend(value.to_bytes(2, "little", signed=True))
-        return self.play_wav(_pcm_to_wav(bytes(pcm), sample_rate, 1))
+        """Open the selected output device without playing an audible test tone."""
+        try:
+            sd = _get_sounddevice()
+            name = self.playback_target or self.playback_device
+            device = resolve_device(name, "output", sd)
+            info = sd.query_devices(device, "output") if device is not None else {}
+            sample_rate = int(float(info.get("default_samplerate", 48000) or 48000))
+            with sd.OutputStream(
+                samplerate=sample_rate, channels=1, dtype="int16", device=device
+            ):
+                pass
+            return True
+        except Exception as exc:
+            print(f"[audio] Windows 输出设备探测失败：{exc}")
+            return False
 
     def play_mp3(self, mp3_bytes: bytes) -> bool:
         return self.play_wav(mp3_bytes)
