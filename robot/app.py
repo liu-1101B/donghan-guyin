@@ -38,7 +38,8 @@ _RELOAD_ORDER = [
     "language.style_prompt", "language.ancient_tts",
     "services.llm_client", "services.tts_client", "services.asr_client",
     "language.turn_engine",
-    "robot.session", "robot.voice_router", "robot.audio_io",
+    "robot.session", "robot.voice_router", "robot.windows_audio",
+    "robot.audio_io",
 ]
 
 
@@ -529,8 +530,19 @@ with col1:
         if not ai.record(5.0, rec_path):
             st.toast("录音失败：请检查麦克风", icon="⚠️")
             return
-        asr = get_asr()
-        text = asr.transcribe_wav(rec_path)
+        try:
+            asr = get_asr()
+            text = asr.transcribe_wav(rec_path)
+        except Exception as exc:
+            model_dir = os.path.join(ROOT, "models", "vosk-small-cn")
+            if not os.path.isdir(model_dir):
+                st.error(
+                    "本地语音识别模型尚未安装。文字输入和语音合成功能仍可使用；"
+                    "请按 README 下载 Vosk 中文模型到 models/vosk-small-cn。"
+                )
+            else:
+                st.error(f"初始化语音识别失败：{exc}")
+            return
         if text:
             st.session_state.robot_input = text
             st.toast(f"识别：{text}")
@@ -541,9 +553,9 @@ with col1:
               help="对麦克风说话 5 秒，本地识别后填入输入框")
 
     st.markdown('<div class="gi-h">播放设备</div>', unsafe_allow_html=True)
-    # 列出当前在线的 PipeWire 输出；"自动"=跟随系统默认输出。
-    # 选定具体设备 → pw-play --target 定向（不动系统默认，
-    # 也不影响其它程序、不和蓝牙抢默认）。持久化存显示名（serial 会漂移）。
+    # 列出当前系统可用的输出设备；"自动"=跟随系统默认输出。
+    # Linux 使用 PipeWire 定向，Windows 使用 sounddevice/PortAudio 设备索引。
+    # 持久化存显示名，避免设备索引随重启变化。
     _sinks = [(s[1], s[0], s[2]) for s in _list_pw_sinks()]
     _opts = ["自动（跟随系统默认输出）"] + [s[0] for s in _sinks]
     try:
