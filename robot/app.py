@@ -543,7 +543,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown('<div class="gi-title">古韵</div>', unsafe_allow_html=True)
-st.markdown('<div class="gi-sub">东汉 · 洛阳官音 · QWEN 对谈</div>', unsafe_allow_html=True)
+st.markdown('<div class="gi-sub">东汉 · 洛阳官音 · 文言对谈</div>', unsafe_allow_html=True)
 
 if st.session_state.get("_reload_warn"):
     st.warning(st.session_state._reload_warn)
@@ -713,14 +713,15 @@ with col1:
     st.markdown('<div class="gi-gap"></div>', unsafe_allow_html=True)
     st.button("生成并朗读", type="primary", use_container_width=True,
               on_click=_generate,
-              help="Qwen 构思文言应答 → 按当前模式合成并自动朗读")
+              help="按所选对话模式生成翻译/应答，再合成并自动朗读")
 
     with st.expander("关于本项目"):
-        st.markdown(f"""- 对话引擎：本地 Qwen3-30B-A3B（llama-server :8080）
+        st.markdown(f"""- 对话模式：大模型 API / 本地词典（可在左侧切换并记住上次选择）
+- 无 API 或 API 不可用时：只使用词典预设应答；未匹配则只朗读输入的古汉语翻译
 - 东汉古韵库：{len(EASTERN_HAN_DB)} 字（郑张尚芳体系，洛阳官音重建）
-- 自然语音：Edge TTS（需网络，断网回退古韵合成）
-- 设备播放：PipeWire 默认输出（蓝牙），异常自动重连
-- 多轮对话：保留最近 {session.max_turns} 轮上下文""")
+- 自然语音：Edge TTS（需网络，失败时可回退古韵合成）
+- 音频设备：Linux 使用 PipeWire/ALSA，Windows 使用系统音频设备
+- 多轮对话：保留最近 {session.max_turns} 轮有效回答上下文""")
 
 # ================= 右栏：结果 =================
 with col2:
@@ -731,7 +732,7 @@ with col2:
     # 后台生成状态区（独立 fragment 轮询，只刷新这一小块）
     _PHASE_LABEL = {
         "start": "正在构思…",
-        "qwen": "构思文言应答…",
+        "qwen": "翻译与生成应答…",
         "synth": "合成语音…",
         "synth_user": "合成语音中 · 我的话…",
         "synth_reply_anc": "合成语音中 · 古韵回答…",
