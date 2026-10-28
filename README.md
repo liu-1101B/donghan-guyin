@@ -32,6 +32,31 @@ start.bat
 
 浏览器地址通常是 `http://localhost:8501`。若端口被占用，请使用 Streamlit 终端输出的实际地址。
 
+### 没有本地大模型的设备怎么办？
+
+机器人不要求每台设备都安装大模型。Windows/普通 Linux 设备可以直接调用云端 OpenAI 兼容 API；也可以连接同一局域网内另一台 Linux 主机提供的模型服务。
+
+1. 复制配置模板：在 Windows 终端运行 `copy .env.example .env`，然后用文本编辑器打开 `.env`。
+2. 选择后端：
+   - `LLM_PROVIDER=cloud`：直接使用云端服务，不尝试本机模型。
+   - `LLM_PROVIDER=local`：只调用 `LOCAL_LLM_BASE`，它可以是局域网服务器地址，并非必须是本机。
+   - `LLM_PROVIDER=auto`：先试模型服务，再试已配置的云端 API，最后使用本地规则。
+   - `LLM_PROVIDER=rules`：不请求任何大模型，仅使用内置词典和规则回答。
+3. 云端模式需要填写服务商提供的 API 根地址、模型名和密钥，例如：
+
+```dotenv
+LLM_PROVIDER=cloud
+LLM_BASE_URL=https://api.openai.com/v1
+LLM_MODEL=gpt-4o-mini
+LLM_API_KEY=在这里填写你自己的密钥
+```
+
+上面只是配置格式示例；实际使用时请以你选择的模型服务商给出的 API 地址和模型名称为准。不要把真实密钥写进代码或提交到 Git。
+
+若希望模型仍由自己的 Linux 服务器运行，可将 `LLM_PROVIDER` 设为 `local`，并把 `LOCAL_LLM_BASE` 指向该服务器的 OpenAI 兼容接口，例如 `http://192.168.1.20:8080/v1`；可按服务要求配置 `LOCAL_LLM_MODEL` 和 `LOCAL_LLM_API_KEY`。服务器需允许客户端所在网络访问，并正确设置防火墙。不要把未经鉴权的模型端口直接暴露到公网。
+
+**隐私与降级：** 云端模式会把用户输入和用于上下文的近期对话发送给所配置的服务商；需按数据敏感程度选择。若没有本地模型、没有配置云端密钥，或网络调用失败，程序仍可运行，但会降级为固定规则回复，不能提供完整的大模型对话能力。
+
 ### 方式三：Windows 运行独立合成器旧界面
 
 双击 `start_synthesizer.bat`，启动根目录的 `guyun_app.py`。它与机器人新版界面是两个不同入口。
