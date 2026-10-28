@@ -26,7 +26,7 @@ if not exist "%PYTHON%" (
 )
 
 echo 检查机器人依赖...
-"%PYTHON%" -c "import streamlit, sounddevice, numpy, scipy, httpx, yaml, dotenv, miniaudio, edge_tts, vosk" >nul 2>&1
+"%PYTHON%" -c "import streamlit, sounddevice, numpy, scipy, httpx, yaml, dotenv, miniaudio, edge_tts, vosk, pypinyin, qieyun, opencc" >nul 2>&1
 if errorlevel 1 (
     echo 首次运行或依赖不完整，正在安装 requirements-robot.txt...
     "%PYTHON%" -m pip install --upgrade pip
