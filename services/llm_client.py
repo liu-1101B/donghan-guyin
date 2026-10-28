@@ -2,13 +2,10 @@
 services/llm_client.py
 文言文翻译与回答服务。
 
-LLM_PROVIDER 可选：
-- auto：本机/局域网模型服务 -> 配置好的云端 API -> 本地规则
-- local：只访问 LOCAL_LLM_BASE（本机或局域网模型服务）
-- cloud：只访问 LLM_BASE_URL
-- rules：不访问模型服务，仅使用本地词典/规则
-
-所有模型服务使用 OpenAI Chat Completions 兼容接口。
+仅有两条路径：
+- 配置 LLM_API_KEY / OPENAI_API_KEY：调用 LLM_BASE_URL 指定的大模型 API；
+- 未配置密钥：不访问任何模型服务，只使用本地词典和预设应答。
+本地词典未命中时 reply 为空，交由调用方只播放用户输入的古汉语翻译。
 """
 import ipaddress
 import json
@@ -187,7 +184,7 @@ def generate_turn(text: str, history=None) -> dict:
 
     if out is None:
         out = _local_fallback(text)
-# 繁体 → 简体（古韵库字表为简体）
+    # 繁体 → 简体（古韵库字表为简体）
     out["translation"] = _to_simplified(out.get("translation", ""))
     out["reply"] = _to_simplified(out["reply"])
     out["reply_modern"] = _to_simplified(out.get("reply_modern", ""))
