@@ -20,6 +20,7 @@ import sys
 import time
 import base64
 import threading
+import json
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -112,6 +113,47 @@ from phonology_db import lookup_char, EASTERN_HAN_DB
 
 OUT_DIR = os.path.join(ROOT, "audio_out")
 os.makedirs(OUT_DIR, exist_ok=True)
+PREFERENCES_FILE = os.path.join(ROOT, ".robot_preferences.json")
+LLM_MODE_LABELS = {
+    "api": "大模型 API（高质量回答）",
+    "dictionary": "本地词典（简单回复）",
+}
+
+
+def _load_robot_preferences():
+    try:
+        with open(PREFERENCES_FILE, encoding="utf-8") as handle:
+            data = json.load(handle)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError, TypeError):
+        return {}
+
+
+def _save_robot_preferences(preferences):
+    """Persist per-device UI preferences atomically, without storing secrets."""
+    temp_path = PREFERENCES_FILE + ".tmp"
+    try:
+        with open(temp_path, "w", encoding="utf-8") as handle:
+            json.dump(preferences, handle, ensure_ascii=False, indent=2)
+        os.replace(temp_path, PREFERENCES_FILE)
+        return True
+    except OSError as exc:
+        print(f"[ui] 无法保存用户设置：{exc.__class__.__name__}")
+        try:
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+        except OSError:
+            pass
+        return False
+
+
+def _persist_llm_mode():
+    mode = st.session_state.get("llm_mode", "dictionary")
+    if mode not in LLM_MODE_LABELS:
+        mode = "dictionary"
+    preferences = _load_robot_preferences()
+    preferences["llm_mode"] = mode
+    _save_robot_preferences(preferences)
 
 
 # ---------- 后台生成（线程内不碰 Streamlit API，状态写 job 字典） ----------
@@ -128,12 +170,15 @@ def _gen_worker(job, session, cfg):
     from services import llm_client
     try:
         job["phase"] = "qwen"
-        gen = llm_client.generate_turn(cfg["text"], session.history())
+        gen = llm_client.generate_turn(
+            cfg["text"], session.history(), mode=cfg.get("llm_mode")
+        )
         translation = (gen.get("translation") or "").strip()
-        reply = (gen.get("reply") or "").strip() or "善。"
-        reply_modern = (gen.get("reply_modern") or "").strip() or reply
+        reply = (gen.get("reply") or "").strip()
+        reply_modern = (gen.get("reply_modern") or "").strip() if reply else ""
         source = gen.get("source", "local")
 
+        # 词典无匹配时，不创建虚构回答；只合成输入内容的古汉语翻译。
         user_text = translation or cfg["text"]
 
         def _do_user():
@@ -149,26 +194,29 @@ def _gen_worker(job, session, cfg):
             return "reply_mod", tts_client.speak_natural(
                 reply_modern, voice=cfg["voice"], rate=cfg["rate"])
 
-        # 三段并行合成（Orin 12 核，各自独立：formant 吃 CPU、Edge 等网络）
+        # 有应答时生成三段音频；无词典匹配时只生成输入翻译的古汉语音频。
         job["phase"] = "synth"
         done = {"user": (b"", None), "reply_anc": (b"", None),
                 "reply_mod": (b"", None)}
+        tasks = [_do_user]
+        if reply:
+            tasks.append(_do_reply_anc)
+        if reply and reply_modern:
+            tasks.append(_do_reply_mod)
         import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
-            futs = [ex.submit(f) for f in (_do_user, _do_reply_anc,
-                                           _do_reply_mod)]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(tasks)) as ex:
+            futs = [ex.submit(task) for task in tasks]
             for fut in concurrent.futures.as_completed(futs):
                 key, val = fut.result()
                 if key in ("user", "reply_anc"):
                     wav, result = val
                     done[key] = (wav, result)
-                else:  # reply_mod：直接是 mp3 字节（失败为 None）
+                else:
                     done["reply_mod"] = (val or b"", None)
                 job["phase"] = f"synth_{key}"
         (wav_u, _), (wav_r, result_r), (mp3_m, _) = (
             done["user"], done["reply_anc"], done["reply_mod"])
-        if not wav_r:
-            # 古韵合成失败（极个别文本）→ 标注兜底，不装腔
+        if reply and not wav_r:
             source = f"{source}+ancient_fallback"
 
         job["result"] = ("ok", {
@@ -178,8 +226,8 @@ def _gen_worker(job, session, cfg):
             "reply_modern": reply_modern,
             "source": source,
             "mode": cfg["mode"],
-            "coverage": result_r.coverage_pct if wav_r else 0.0,
-            "approx": result_r.approx if wav_r else 0,
+            "coverage": result_r.coverage_pct if result_r and wav_r else 0.0,
+            "approx": result_r.approx if result_r and wav_r else 0,
             "audios": {
                 "user": {"data": wav_u, "kind": "wav", "text": user_text},
                 "reply_anc": {"data": wav_r, "kind": "wav", "text": reply},
@@ -188,14 +236,16 @@ def _gen_worker(job, session, cfg):
             },
             "ms": time.time(),
         })
-        # 自动朗读：按模式选主段（自然语音→现代段；东汉古韵→古韵段），
-        # 主段缺失时按 古韵回答 → 现代回答 → 我的话 顺序退
+        # 有回答时按语音模式播放回答；词典未命中时只播放输入翻译的古汉语。
         job["phase"] = "play"
         a = job["result"][1]["audios"]
-        pref = a["reply_mod"] if cfg["mode"] == "natural" else a["reply_anc"]
-        main = pref if pref["data"] else next(
-            (x for x in (a["reply_anc"], a["reply_mod"], a["user"])
-             if x["data"]), None)
+        if not reply:
+            main = a["user"]
+        else:
+            pref = a["reply_mod"] if cfg["mode"] == "natural" else a["reply_anc"]
+            main = pref if pref["data"] else next(
+                (x for x in (a["reply_anc"], a["reply_mod"], a["user"])
+                 if x["data"]), None)
         try:
             if main and main["data"]:
                 ai = get_audio_io()
@@ -507,6 +557,16 @@ if "turns" not in st.session_state:
 if "last_result" not in st.session_state:
     st.session_state.last_result = None
 
+# 首次进入时使用合理默认值并保存；之后始终读取本机上次选择。
+_preferences = _load_robot_preferences()
+if "llm_mode" not in st.session_state:
+    _stored_mode = _preferences.get("llm_mode")
+    if _stored_mode not in LLM_MODE_LABELS:
+        _stored_mode = "api" if (os.environ.get("LLM_API_KEY") or os.environ.get("OPENAI_API_KEY")) else "dictionary"
+        _preferences["llm_mode"] = _stored_mode
+        _save_robot_preferences(_preferences)
+    st.session_state["llm_mode"] = _stored_mode
+
 session = get_session()
 router = get_router()
 
@@ -520,6 +580,20 @@ col1, col2 = st.columns([5, 7], gap="large")
 
 # ================= 左栏：输入与设置 =================
 with col1:
+    st.markdown('<div class="gi-h">对话模式</div>', unsafe_allow_html=True)
+    st.radio(
+        "对话模式",
+        options=["api", "dictionary"],
+        format_func=lambda value: LLM_MODE_LABELS[value],
+        key="llm_mode",
+        on_change=_persist_llm_mode,
+        help="大模型 API：使用你配置的密钥获取高质量回答。\n本地词典：不调用大模型；词典无匹配时只播放输入的古汉语翻译。",
+        label_visibility="collapsed",
+    )
+    if st.session_state["llm_mode"] == "api" and not (
+        os.environ.get("LLM_API_KEY") or os.environ.get("OPENAI_API_KEY")
+    ):
+        st.warning("当前选择了大模型 API，但尚未配置密钥。请在项目根目录的 .env 中填写 LLM_API_KEY 并重启应用；未配置时将暂用本地词典。")
     st.markdown('<div class="gi-h">输入</div>', unsafe_allow_html=True)
     st.text_area("输入", placeholder="说点什么，白话或文言都可以…",
                  height=120, key="robot_input", label_visibility="collapsed")
@@ -617,6 +691,7 @@ with col1:
             "text": text,
             "mode": mode,
             "mode_label": "自然语音" if mode == "natural" else "东汉古韵",
+            "llm_mode": ss.get("llm_mode", "dictionary"),
             "voice": name_to_id.get(ss.get("robot_voice"), voice_ids[0]),
             "rate": f"{int(ss.get('robot_rate', -10)):+d}%",
             "speed": float(ss.get("robot_speed", 1.0)),
@@ -705,15 +780,20 @@ with col2:
         if kind == "error":
             ss.gen_error = payload
             return
-        session.add(payload["user"], payload["reply"])   # LLM 上下文
+        # 无应答的词典未命中轮次不进入 LLM 上下文。
+        if payload["reply"]:
+            session.add(payload["user"], payload["reply"])
         ss.last_result = payload
-        ss.turns.append((payload["user"], payload["reply"],
+        display_reply = payload["reply"] or "（本地词典未匹配，未生成回答）"
+        ss.turns.append((payload["user"], display_reply,
                          "自然语音" if payload["mode"] == "natural" else "东汉古韵"))
         ss.turns = ss.turns[-session.max_turns:]
         vol = job.get("vol_note")
         if job.get("play_ok") is True:
-            ss.play_note = ("已朗读到默认输出设备"
-                            + (f"（{vol}）" if vol else ""))
+            ss.play_note = (
+                ("已朗读古汉语翻译" if not payload["reply"] else "已朗读到默认输出设备")
+                + (f"（{vol}）" if vol else "")
+            )
         elif job.get("play_ok") is False:
             ss.play_note = "已生成（自动朗读失败，可点「设备播放」重试）"
         st.rerun(scope="app")
@@ -742,8 +822,11 @@ with col2:
         if res["translation"]:
             st.markdown(f'<div class="gi-muteline">我的话 · 古汉语：{res["translation"]}</div>',
                         unsafe_allow_html=True)
-        st.markdown(f'<div class="gi-classical">{res["reply"]}</div>',
-                    unsafe_allow_html=True)
+        if res.get("reply"):
+            st.markdown(f'<div class="gi-classical">{res["reply"]}</div>',
+                        unsafe_allow_html=True)
+        elif res.get("source") == "local-dictionary-miss":
+            st.info("本地词典没有匹配到应答。本轮不生成回答，只播放输入内容的古汉语翻译。")
         if res.get("reply_modern") and res["reply_modern"] != res["reply"]:
             st.markdown(f'<div class="gi-muteline">白话：{res["reply_modern"]}</div>',
                         unsafe_allow_html=True)
@@ -753,11 +836,14 @@ with col2:
         if st.session_state.get("play_note"):
             st.caption(st.session_state.play_note)
         audios = res.get("audios") or {}
-        _CARD_ORDER = [
-            ("user", "我的话 · 东汉古韵"),
-            ("reply_anc", "回答 · 东汉古韵"),
-            ("reply_mod", "回答 · 现代汉语"),
-        ]
+        if not res.get("reply"):
+            _CARD_ORDER = [("user", "输入翻译 · 古汉语")]
+        else:
+            _CARD_ORDER = [
+                ("user", "我的话 · 东汉古韵"),
+                ("reply_anc", "回答 · 东汉古韵"),
+                ("reply_mod", "回答 · 现代汉语"),
+            ]
         for key, label in _CARD_ORDER:
             item = audios.get(key)
             if not item or not item["data"]:
@@ -805,7 +891,7 @@ with col2:
                                    key=f"dl_{key}")
 
         # 东汉 IPA（古韵模式）
-        if res["mode"] == "ancient":
+        if res["mode"] == "ancient" and res.get("reply"):
             r = text_to_ipa(res["reply"])
             st.markdown('<div class="gi-h">东汉洛阳音 IPA</div>',
                         unsafe_allow_html=True)
@@ -813,7 +899,7 @@ with col2:
                         unsafe_allow_html=True)
 
         # 逐字音韵分析（古韵模式，收进折叠面板）
-        if res["mode"] == "ancient":
+        if res["mode"] == "ancient" and res.get("reply"):
             rows = analyze_reply(res["reply"])
             if rows:
                 with st.expander(f"逐字音韵分析（{len(rows)} 字）"):
