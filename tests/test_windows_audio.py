@@ -64,7 +64,7 @@ class WindowsAudioDeviceTests(unittest.TestCase):
             wf.setnchannels(1)
             wf.setsampwidth(2)
             wf.setframerate(16000)
-            wf.writeframes(b"\\x01\\x00\\x02\\x00\\x03\\x00")
+            wf.writeframes(b"\x01\x00\x02\x00\x03\x00")
         samples, sample_rate, channels = _wav_to_int16(buf.getvalue())
         self.assertEqual((sample_rate, channels), (16000, 1))
         self.assertEqual(samples.shape, (3, 1))
