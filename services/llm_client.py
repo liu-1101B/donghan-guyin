@@ -32,6 +32,17 @@ except ImportError:
     def _to_simplified(text: str) -> str:
         return text
 
+def _safe_log(message: str) -> None:
+    """Logging must never break dictionary fallback on legacy Windows consoles."""
+    try:
+        print(message)
+    except UnicodeEncodeError:
+        try:
+            print(message.encode("ascii", "backslashreplace").decode("ascii"))
+        except Exception:
+            pass
+
+
 # 可选的大模型 API：填写密钥时调用所配置的 OpenAI 兼容接口；
 # 密钥为空时完全不尝试本地/远程模型，直接使用本地词典应答。
 LLM_BASE = os.environ.get("LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/")
@@ -181,14 +192,14 @@ def generate_turn(text: str, history=None, mode: str = None) -> dict:
     out = None
     if selected == "api":
         if not API_KEY:
-            print("[llm] 当前选择大模型 API 模式，但未配置 LLM_API_KEY；改用本地词典")
+            _safe_log("[llm] 当前选择大模型 API 模式，但未配置 LLM_API_KEY；改用本地词典")
         else:
             try:
                 out = _call_chat(LLM_BASE, LLM_MODEL, text, history,
                                  key=API_KEY, timeout=60.0)
                 out["source"] = "cloud"
             except Exception as e:
-                print(f"[llm] 云端 API 调用失败，改用本地词典：{e.__class__.__name__}")
+                _safe_log(f"[llm] 云端 API 调用失败，改用本地词典：{e.__class__.__name__}")
 
     if out is None:
         out = _local_fallback(text)
