@@ -32,14 +32,24 @@ except ImportError:
     def _to_simplified(text: str) -> str:
         return text
 
-# 本地优先：llama-server (llama.cpp) OpenAI 兼容接口
-LOCAL_BASE = os.environ.get("LOCAL_LLM_BASE", "http://127.0.0.1:8080/v1")
-LOCAL_MODEL = os.environ.get("LOCAL_LLM_MODEL", "")  # 空 = 用服务端的默认模型
+# 模型选择：
+# auto  = 优先 OpenAI 兼容模型服务，失败后尝试云端，最后规则回退
+# local = 只调用 LOCAL_LLM_BASE（可为本机，也可为局域网/自建服务器）
+# cloud = 只调用 LLM_BASE_URL，不尝试本机模型
+# rules = 不访问任何模型服务，只用内置词典/规则
+LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "auto").strip().lower()
 
-# 云端可选
-LLM_BASE = os.environ.get("LLM_BASE_URL", "https://api.openai.com/v1")
+# OpenAI 兼容模型服务。默认是本机 llama-server，也可指向局域网远程服务器。
+LOCAL_BASE = os.environ.get("LOCAL_LLM_BASE", "http://127.0.0.1:8080/v1").rstrip("/")
+LOCAL_MODEL = os.environ.get("LOCAL_LLM_MODEL", "")  # 空 = 使用服务端默认模型
+LOCAL_API_KEY = os.environ.get("LOCAL_LLM_API_KEY", "")
+
+# 云端 OpenAI 兼容接口
+LLM_BASE = os.environ.get("LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/")
 LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-4o-mini")
 API_KEY = os.environ.get("LLM_API_KEY", "") or os.environ.get("OPENAI_API_KEY", "")
+
+_VALID_PROVIDERS = {"auto", "local", "cloud", "rules"}
 
 # 本地回退用的固定应答语料（常见意图 → (文言应答, 白话应答)）
 _LOCAL_REPLIES = [
@@ -127,7 +137,7 @@ def _build_messages(text: str, history):
     return msgs
 
 
-def _call_chat(base: str, model: str, text: str, history, key=""):
+def _call_chat(base: str, model: str, text: str, history, key="", timeout=120.0):
     headers = {"Content-Type": "application/json"}
     if key:
         headers["Authorization"] = f"Bearer {key}"
@@ -137,30 +147,59 @@ def _call_chat(base: str, model: str, text: str, history, key=""):
         payload["model"] = model
     # 本机服务不走代理（环境里的 ALL_PROXY 指向不稳定的本地代理）
     trust_env = "127.0.0.1" not in base and "localhost" not in base
+    # 限制连接阶段等待时间；模型生成本身仍可使用较长读取超时。
+    timeout_cfg = httpx.Timeout(timeout, connect=min(5.0, timeout))
     r = httpx.post(f"{base}/chat/completions", headers=headers,
-                   json=payload, timeout=120.0, trust_env=trust_env)
+                   json=payload, timeout=timeout_cfg, trust_env=trust_env)
     r.raise_for_status()
     content = r.json()["choices"][0]["message"]["content"]
     return _extract_json(content, text)
 
 
+def _selected_provider() -> str:
+    """Return a safe provider mode; invalid values fall back to auto."""
+    provider = LLM_PROVIDER
+    if provider not in _VALID_PROVIDERS:
+        print(f"[llm] 未知 LLM_PROVIDER={provider!r}，改用 auto")
+        return "auto"
+    return provider
+
+
 def generate_turn(text: str, history=None) -> dict:
-    """单轮对话统一入口：本地 Qwen3 → 云端 → 规则回退"""
+    """统一入口：按 LLM_PROVIDER 调用模型，失败时退回内置规则。
+
+    auto: local-compatible endpoint -> cloud (if configured) -> rules
+    local: LOCAL_LLM_BASE only (it may point to a LAN model server)
+    cloud: LLM_BASE_URL only
+    rules: skip all network model calls
+    """
+    provider = _selected_provider()
     out = None
-    # 1) 本地 llama-server
-    try:
-        out = _call_chat(LOCAL_BASE, LOCAL_MODEL, text, history)
-        out["source"] = "local-qwen"
-    except Exception as e:
-        print(f"[llm] 本地 LLM 不可用: {e.__class__.__name__}")
-    # 2) 云端（需 key）
-    if out is None and API_KEY:
+
+    if provider in {"auto", "local"}:
         try:
-            out = _call_chat(LLM_BASE, LLM_MODEL, text, history, key=API_KEY)
-            out["source"] = "cloud"
+            out = _call_chat(
+                LOCAL_BASE, LOCAL_MODEL, text, history,
+                key=LOCAL_API_KEY, timeout=120.0,
+            )
+            out["source"] = "local-model"
         except Exception as e:
-            print(f"[llm] 云端调用失败: {e.__class__.__name__}")
-    # 3) 规则回退
+            print(f"[llm] 模型服务 {LOCAL_BASE} 不可用: {e.__class__.__name__}")
+
+    if out is None and provider in {"auto", "cloud"}:
+        if API_KEY:
+            try:
+                out = _call_chat(
+                    LLM_BASE, LLM_MODEL, text, history,
+                    key=API_KEY, timeout=60.0,
+                )
+                out["source"] = "cloud"
+            except Exception as e:
+                print(f"[llm] 云端模型调用失败: {e.__class__.__name__}")
+        else:
+            print("[llm] 未配置云端 API 密钥；如需云端模型，请设置 LLM_API_KEY")
+
+    # rules mode is explicitly offline; auto/local/cloud all degrade here on failure.
     if out is None:
         out = _local_fallback(text)
         out["source"] = "local-rules"
