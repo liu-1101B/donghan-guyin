@@ -70,12 +70,16 @@ def _resolve_device(configured: str, kind: str) -> str:
 
 
 def _list_pw_sinks() -> list:
-    """解析 wpctl status → [(serial, name, is_default, vol), ...]
+    """列出输出设备，返回 (id, name, is_default, volume)。
 
-    带音量：BT 音箱常以自己的硬件音量同步过来（可能为 0），
-    此时 sink 在、通道通、pw-play 不报错，但全程无声——
-    必须显式查音量才能发现。
+    Linux 返回 PipeWire sinks；Windows 返回 sounddevice 可用的输出设备。
     """
+    if os.name == "nt":
+        try:
+            from robot.windows_audio import list_output_devices
+            return list_output_devices()
+        except Exception:
+            return []
     try:
         out = subprocess.run(["wpctl", "status"], capture_output=True,
                              text=True, timeout=10).stdout
@@ -161,14 +165,9 @@ def set_pw_volume(serial, vol: float) -> bool:
 
 
 def ensure_audible(playback_device, target_name=None):
-    """确保 pw-play 实际会打到的 sink 音量 > 0。
-
-    蓝牙音箱常把自己面板上的音量同步过来（可能为 0）——此时
-    sink 在、A2DP 通道通、pw-play 不报错，但全程无声。这是
-    "连上却听不见"的主因（区别于 Built-in 空接口：那个连 sink
-    都没有物理输出）。为 0 时自动抬到 45%。
-    返回提示语（无问题返回 None）。
-    """
+    """检查 Linux PipeWire 输出是否静音；Windows 使用系统音量设置。"""
+    if os.name == "nt":
+        return None
     try:
         eff = _effective_sink(playback_device, target_name)
     except Exception:
@@ -271,8 +270,21 @@ class AudioIO:
         # 设备按名字解析成当前卡号：USB 声卡的 ALSA 卡号每次重启
         # 都会漂移（曾 card 2 → 重启后 card 0，录音随即失效）。
         # 配置里给 plughw:/hw:/plug: 前缀时仍按原样用（显式指定）。
-        self.capture_device = _resolve_device(capture_device, "capture")
-        self.playback_device = _resolve_device(playback_device, "playback")
+        self._windows_backend = None
+        if os.name == "nt":
+            # Windows 没有 ALSA/arecord；设备由 sounddevice/PortAudio 解析。
+            self.capture_device = capture_device
+            self.playback_device = playback_device
+            from robot.windows_audio import WindowsAudioIO
+            self._windows_backend = WindowsAudioIO(
+                capture_device=capture_device,
+                playback_device=playback_device,
+                sample_rate=sample_rate,
+                playback_target=playback_target,
+            )
+        else:
+            self.capture_device = _resolve_device(capture_device, "capture")
+            self.playback_device = _resolve_device(playback_device, "playback")
         # **原始设备名**（如 "USB Audio"）：智能定向（_target_sink）靠
         # 名字子串匹配 PipeWire sink 显示名，必须用原始名；解析后的
         # plughw:C,D 会让 _target_sink 误判为"显式指定卡"而直接跟随
@@ -291,9 +303,16 @@ class AudioIO:
         # （症状：听完一段就听不了另一段）。
         self._last_playback = None
 
+    def _sync_windows_backend(self):
+        if self._windows_backend is not None:
+            self._windows_backend.playback_target = self.playback_target
+
     # ---------- 录制 ----------
     def record(self, seconds: float, out_path: str) -> bool:
-        """录制指定时长的 16kHz mono WAV。成功返回 True。"""
+        """录制指定时长的 mono WAV。成功返回 True。"""
+        if self._windows_backend is not None:
+            self._sync_windows_backend()
+            return self._windows_backend.record(seconds, out_path)
         cmd = ["arecord", "-q", "-f", "S16_LE", "-r", str(self.sample_rate),
                "-c", "1", "-d", str(int(seconds)),
                "-D", self.capture_device, out_path]
@@ -328,6 +347,9 @@ class AudioIO:
         界面按钮请用 play_async()，避免 UI 卡到播完。
         """
         self.stop()
+        if self._windows_backend is not None:
+            self._sync_windows_backend()
+            return self._windows_backend.play_wav(wav_bytes)
         pb = _Playback(wav_bytes, self.playback_device,
                        self.playback_target, self.playback_name)
         self._last_playback = pb
@@ -340,6 +362,9 @@ class AudioIO:
         每次播放独立（不干扰彼此）：想同时放两段可以连点，
         想打断当前播放调 stop()。
         """
+        if self._windows_backend is not None:
+            self._sync_windows_backend()
+            return self._windows_backend.play_async(wav_bytes)
         pb = _Playback(wav_bytes, self.playback_device,
                        self.playback_target, self.playback_name)
         self._last_playback = pb
@@ -353,6 +378,9 @@ class AudioIO:
         返回 True = 通道正常；False = 疑似 A2DP 假连接（通道挂死）。
         探测音人耳几乎不可闻（300Hz 短音、低音量），仅作自检。
         """
+        if self._windows_backend is not None:
+            self._sync_windows_backend()
+            return self._windows_backend.probe(timeout=timeout)
         import math
         sr = 16000
         n = int(sr * 0.3)
@@ -410,6 +438,9 @@ class AudioIO:
 
     def stop(self):
         """打断最近一次播放"""
+        if self._windows_backend is not None:
+            self._windows_backend.stop()
+            return
         pb = self._last_playback
         if pb:
             pb.cancel()
@@ -547,6 +578,8 @@ def bt_status(mac: str = BT_MAC) -> dict:
     import re
     out = {"connected": False, "bt_name": None, "sink_id": None,
            "sink_name": None, "is_default": False}
+    if os.name == "nt":
+        return out
     try:
         info = subprocess.run(["bluetoothctl", "--timeout", "5",
                                "info", mac],
