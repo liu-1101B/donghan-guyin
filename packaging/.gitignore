@@ -1,6 +1,8 @@
 build/
 dist/
 *.spec
+# v4 的 PyInstaller 规格文件要跟着仓库走（其余 .spec 是生成物）
+!古韵机器人.spec
 *.exe
 古韵合成器_Setup*.exe
 __pycache__/

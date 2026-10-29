@@ -48,6 +48,37 @@ Copy-Item -Recurse -Force "espeak-ng\*" "dist\古韵合成器\espeak-ng"
 
 - 分发 `古韵合成器_Setup_v2.0.exe` 安装包即可
 
+---
+
+# v4.0.0：打包机器人新版界面（便携版，不做安装包）
+
+v4 打的是 `robot/app.py`（新版机器人界面），不是 `guyun_app.py`。产物是**免安装便携目录 + zip**，
+不需要 Inno Setup。
+
+```powershell
+# 在 packaging 目录下
+python -m PyInstaller --noconfirm --clean 古韵机器人.spec
+# 把 eSpeak-ng 放进 _internal（sound_synth 按 __file__ 找同级的 espeak-ng/）
+New-Item -ItemType Directory -Force dist\古韵机器人\_internal\espeak-ng | Out-Null
+Copy-Item -Recurse -Force ..\..\guyun_packaging\espeak-ng\* dist\古韵机器人\_internal\espeak-ng
+# 加两个 bat（启动 / 下载识别模型）后打 zip
+tar.exe -a -c -f dist\古韵机器人_v4.0.0_windows_x64.zip -C dist 古韵机器人
+```
+
+要点（踩过的坑）：
+
+- **入口必须是独立的 launcher**：`launcher_v4.py` 负责把 `_internal` 加进 `sys.path`、`chdir` 过去、
+  再 `streamlit run robot/app.py`；关掉 fileWatcher，否则 frozen 模式会去 reload 源码。
+- **项目代码按数据文件打包**（`datas.append((robot/, "robot"))` 这种），运行时当普通包 import，
+  不要指望 PyInstaller 静态分析出 `robot.app`。
+- **自定义组件目录** `components/hold_to_record/` 必须一起打进去，`robot/recorder.py` 用
+  `__file__/../components` 找它，frozen 下落在 `_internal/components`，正好对得上。
+- **识别模型不进包**（228MB）；随包放一个 `下载识别模型.bat` 从 hf-mirror 拉。
+- **只在 frozen 下才暴露的 bug**：语音输入的"模型是否就绪"原来写死查 `models/vosk-small-cn`，
+  源码环境两个模型都在所以没发现，打包版只有 SenseVoice → 误报"未安装"。已改成
+  `available_backends()` 探测。
+- 打包后体积约 480MB（streamlit + numpy/scipy + onnxruntime），zip 约 188MB。
+
 ## 技术说明
 
 ### launcher.py 工作原理
