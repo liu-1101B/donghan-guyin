@@ -15,15 +15,15 @@
  Jetson 本地录音 (arecord, 16kHz mono)
       │
       ▼
- 本地语音识别 (Vosk 中文小模型)   ── 可插拔云端 ASR (services/asr_client.py)
+ 本地语音识别 (SenseVoice / sherpa-onnx) ── Vosk 兜底，云端 ASR 接口预留
       │
       ▼
  现代汉语文本
       │
       ▼
  文言文翻译 + 回答 (language/turn_engine.py)
-      │   默认：本地 Qwen3-30B (llama-server :8080)
-      │   可选：LLM_API_KEY 走 OpenAI 兼容云端；兜底：词典+规则
+      │   有 API 密钥：调用配置的大模型 API；无 API：本地词典/预设应答
+      │   词典未命中：只合成输入文本的古汉语翻译，不补造回答
       ▼
  语音路由 (robot/voice_router.py, m 键运行时切换)
    ┌──────────────┴──────────────┐
@@ -33,7 +33,7 @@
  → MP3                          → synthesize_text() → WAV
    └──────────────┬──────────────┘
                   ▼
-          PipeWire 默认输出 (pw-play: 蓝牙音箱/USB 音箱)
+          Linux: PipeWire 默认输出；Windows: sounddevice/PortAudio 系统设备
 ```
 
 ## 环境（本机已验证）
@@ -44,6 +44,32 @@
   - 麦克风侧接好即可采集（`arecord -D plughw:2,0`）。
 - 扬声器：蓝牙音箱（PipeWire 默认输出自动跟随），或把耳机插到 USB 一体机
 - 麦克风/扬声器权限：用户需在 `audio` 组（本机 lab006 已是）
+
+## Windows 10/11 运行
+
+Windows 使用原生音频后端（`sounddevice/PortAudio`），不需要安装 `arecord`、`pw-play` 或 `wpctl`。在仓库根目录双击 `start.bat` 即可创建虚拟环境、安装依赖并启动新版机器人界面 `robot/app.py`。
+
+- 首次启动可选择下载 SenseVoice 多语识别模型（约 228 MB，来自 hf-mirror），下载后路径应为 `models/sense-voice/`（`model.int8.onnx` + `tokens.txt`）。未安装模型时，文字输入与语音合成功能仍可用，语音输入不可用。旧的 Vosk 小模型（44 MB，`models/vosk-small-cn/`）仍可作为兜底，但识别精度明显更差。
+- 音频设备默认跟随 Windows 系统默认麦克风和扬声器；左侧「播放设备」可以选择特定输出设备（同名设备会带 ` · #序号` 以便区分）。
+- **语音输入是「按住说话、松开发送」**：麦克风在浏览器侧采集（不占用服务器的录音设备），松手后本地 SenseVoice 识别并回填输入框（自带标点）。因为浏览器只在 `http://localhost`（或 https）下允许开麦克风，用局域网 IP 打开时语音输入会被拦，此时用文字输入即可。
+- 每次录音后界面会留一行状态：`已录 2.2 秒（峰值 -14 dBFS / 均方根 -27 dBFS）· 识别：…`。识别为空时先看这两个数字：峰值低于 -45 dBFS 说明麦克风没收到声音（查默认输入设备与浏览器权限）；数值正常却没字，是小模型能力问题，靠近麦克风、说慢一点再试。
+- 对话模式只有两种：**大模型 API** 和**本地词典**。密钥可以直接在界面左侧「大模型 API 设置」里填写（写入本机 `.env`，立即生效），不必手动改文件。这一版不再连接 `127.0.0.1:8080` 的本地模型服务；没有密钥时请用本地词典模式。
+- 界面固定使用浅色「宣纸」主题（`.streamlit/config.toml` 里 `base = "light"`），系统/浏览器切深色模式也不会变成浅字压浅底。
+- Edge TTS 自然语音需要联网；古韵合成使用本地音韵库。
+- 如只需要独立合成器旧界面，请启动 `start_synthesizer.bat`，它运行的是 `guyun_app.py`，不是机器人界面。
+
+若 Windows 录音/播放失败，请先检查 Windows「声音设置」中默认输入/输出设备，再确认 `sounddevice` 已安装。Linux/Jetson 的 PipeWire/ALSA 逻辑保持不变。
+
+## 两种对话模式
+
+机器人仅有两种对话模式，可在网页左侧「对话模式」入口切换：
+
+- **大模型 API（高质量回答）**：在网页左侧「大模型 API 设置」里填接口地址、模型名和密钥，点「保存」即时生效（内容写入本机 `.env`）。也可以手动把 `.env.example` 复制为 `.env` 再填。
+- **本地词典（简单回复）**：完全不调用模型 API。词典匹配成功则使用预设文言应答；没有匹配项时不输出虚构回答，只将输入文本按本地字典转写为古汉语并播放。
+
+首次启动时，若环境里已有 API 密钥，默认选择 API 模式；否则默认选择本地词典模式。模式存于仓库根目录的 `.robot_preferences.json`，此文件已加入 `.gitignore`，再次启动会沿用上次选择。运行中切换会立即保存。
+
+若用户选择 API 模式却未配置密钥，程序会提示并暂用本地词典，不会尝试本地部署模型。API 请求失败时也回退到词典；若词典未命中，则只播放古汉语翻译。密钥只保存在本机 `.env` 中（界面里「清除密钥」可一键清空），勿提交至版本库。API 模式会将输入及近期对话上下文发送给 API 服务商。
 
 ## 安装
 
@@ -56,10 +82,16 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-robot.txt
 
-# 下载 Vosk 中文小模型（约 44MB）到 models/
-mkdir -p models && cd models
-curl -O https://alphacephei.com/vosk/models/vosk-model-small-cn-0.22.zip
-python3 -c "import zipfile,os; z=zipfile.ZipFile('vosk-model-small-cn-0.22.zip'); z.extractall(); os.rename('vosk-model-small-cn-0.22','vosk-small-cn')"
+# 下载 SenseVoice 识别模型（约 228MB）到 models/sense-voice/
+mkdir -p models/sense-voice
+B=https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main
+curl -L -o models/sense-voice/model.int8.onnx "$B/model.int8.onnx"
+curl -L -o models/sense-voice/tokens.txt      "$B/tokens.txt"
+
+# （可选）旧方案：Vosk 小模型 44MB，精度更差，只在没有上面那套时兜底
+# mkdir -p models && cd models
+# curl -O https://alphacephei.com/vosk/models/vosk-model-small-cn-0.22.zip
+# python3 -c "import zipfile,os; z=zipfile.ZipFile('vosk-model-small-cn-0.22.zip'); z.extractall(); os.rename('vosk-model-small-cn-0.22','vosk-small-cn')"
 ```
 
 ## 运行
@@ -80,7 +112,7 @@ python -m robot.main --text "今天天气真好"
 # 4) 网页使用界面（推荐，风格对齐原项目 guyun_app.py）
 streamlit run robot/app.py
 #   浏览器打开 http://localhost:8501
-#   功能：文字/麦克风输入、双模式、音色+语速+基频滑杆、
+#   功能：文字输入 / 按住说话、双模式、音色+语速+基频滑杆、
 #         浏览器内播放 / 一键"设备播放"（走 PipeWire 蓝牙，后台不阻塞）、
 #         扩展朗读：🗣 回答·现代汉语读 / 📜 我的话·古汉语翻译读、
 #         IPA 与逐字音韵表、多轮历史
@@ -90,7 +122,7 @@ streamlit run robot/app.py
 
 | 按键 | 功能 |
 |---|---|
-| 空行 (Enter) | 录音 5 秒并处理 |
+| 空行 (Enter) | 录音（命令行版仍然是固定 5 秒） |
 | 直接输入文字 | 免麦克风，直接处理 |
 | `m` | 切换 自然语音 / 东汉古韵（无需重启） |
 | `r` | 重播上一条回答 |
@@ -200,7 +232,7 @@ robot/
 └── voice_router.py  # 自然语音 / 东汉古韵 运行时切换（持有音色/语速参数）
 
 services/
-├── asr_client.py    # 本地 Vosk 识别（自动重采样/降声道），云端接口预留
+├── asr_client.py    # 本地识别：SenseVoice/Paraformer(sherpa-onnx) → Vosk 兜底；自动重采样
 ├── llm_client.py    # 翻译+回答：OpenAI 兼容接口可选，本地词典/规则回退
 └── tts_client.py    # Edge TTS 自然语音（自动尝试代理→直连）
 
@@ -236,7 +268,7 @@ config/settings.yaml # 音频设备、对话容量、默认模式
 ## 已知限制与后续
 
 - 当前网络环境 DNS/代理不稳定：Edge TTS 自动在"代理→直连"间回退；断网时自然语音自动回退本地古韵合成。
-- 小模型 Vosk 词汇有限，识别偶有错字（"天朗气清"→"天冷起清"）；后续可换 vosk 大模型或云端 ASR。
+- 识别后端按可用性自动选：SenseVoice（默认，中文准确率高、带标点、5 秒语音约 0.1 秒解完）> Paraformer > Vosk 小模型（精度弱，仅兜底）。想继续提升可换更大的 SenseVoice/FunASR 模型或接云端 ASR。
 - 播放通道：`pw-play` 优先（走 PipeWire 默认输出，自动跟随当前设备，如蓝牙音箱），
   回退 `aplay -D plughw:2,0` 直连。想换音箱/耳机只需 `wpctl set-default <sink>`，
   或用 `./robot/bt_connect.sh`，无需改代码。

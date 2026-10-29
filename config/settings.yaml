@@ -1,14 +1,14 @@
 # 东汉古韵机器人配置
-# 设备编号按本机 Jetson AGX Orin 实测填写（arecord/aplay -l 查看）
+# Linux/Jetson 可填设备名（按 arecord/aplay 解析）；Windows 按名称匹配，找不到时回退系统默认设备
 
 audio:
-  # 麦克风：USB 音频设备。写设备名（子串匹配），程序自动解析当前卡号
+  # 麦克风：设备名子串匹配。Linux 自动解析 ALSA 卡号；Windows 使用 PortAudio 设备名
   # ——USB 声卡的 ALSA 卡号每次重启都会漂移，写死 plughw:C,D 会失效。
   # 需要强制指定时可写 plughw:<card>,<device>（显式前缀，原样使用）。
   capture_device: USB Audio
-  # 扬声器：本机 USB 音频设备同时带采集与播放（有源一体机），默认用它。
-  # 注意：日常播放走 PipeWire 默认输出（蓝牙等），此值仅作 pw-play
-  # 失败时的 aplay 直连回退。
+  # 扬声器：设备名子串匹配。Windows 可选择输出设备，自动模式跟随系统默认。
+  # Linux：日常播放走 PipeWire 默认输出（蓝牙等），此值仅作 pw-play
+  # 失败时的 aplay 直连回退。Windows 则用于选择输出设备的名称匹配。
   playback_device: USB Audio
   sample_rate: 16000
 
