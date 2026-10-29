@@ -8,7 +8,9 @@ httpx>=0.24.0
 python-dotenv>=1.0.0
 pyyaml>=6.0.0
 
-# 本地语音识别（默认 Vosk，模型 ~44MB 放 models/vosk-small-cn）
+# 本地语音识别（首选 SenseVoice via sherpa-onnx，模型约 228MB 放 models/sense-voice/）
+# Vosk 仅作兜底（44MB，models/vosk-small-cn/），精度明显更弱
+sherpa-onnx>=1.10.0
 vosk>=0.3.45
 
 # 音频播放（MP3 解码；arecord/aplay 由系统提供）
