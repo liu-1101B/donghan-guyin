@@ -16,11 +16,16 @@
 
 ## 快速开始
 
-### 方式一：独立合成器安装包（旧版界面）
+### 方式一：下载便携包（推荐，免安装）
 
-从 Releases 下载 `古韵合成器_Setup_v3.0.0.exe`，双击安装即可。这个安装包运行的是独立合成器界面；若要使用 Linux/Jetson 机器人版的新版界面，请在 Windows 上运行下面的 `start.bat`。
+到 [Releases](https://github.com/liu-1101B/donghan-guyin/releases/latest) 下载 `guyun-robot-v4.0.0-windows-x64.zip`（约 188 MB），解压到可写目录，然后：
 
-### 方式二：Windows 运行机器人新版界面（推荐）
+1. 双击 `下载识别模型.bat` —— 拉取 SenseVoice 识别模型（约 228 MB，通常半分钟；跳过也能用，只是语音输入不可用）；
+2. 双击 `启动.bat` —— 浏览器会自动打开 `http://localhost:8501`。
+
+这就是**新版机器人界面**（按住说话、双模式、界面内填 API）。包里不带识别模型（体积原因），所以有第 1 步。
+
+### 方式二：Windows 从源码运行
 
 双击仓库根目录的 `start.bat`。它会创建独立的 `.venv`、安装 `requirements-robot.txt`，然后启动 `robot/app.py`（机器人新版界面）。首次启动会询问是否从镜像下载约 228 MB 的 SenseVoice 中文识别模型（准确率明显高于原来的 Vosk 小模型）；不下载时，文字输入与语音合成仍可使用，语音输入（按住说话）暂不可用。
 
@@ -50,9 +55,9 @@ LLM_API_KEY=填写你自己的密钥
 
 若 API 请求失败，也会回退到词典模式；词典没有匹配回答时，同样只播放翻译。真实密钥只保存在本地 `.env` 文件，不要提交到 Git。API 模式会把输入和近期对话上下文发送给所配置的服务商，请根据隐私要求选择。
 
-### 方式三：Windows 运行独立合成器旧界面
+### 方式三：Windows 运行独立合成器旧界面（v3 的界面）
 
-双击 `start_synthesizer.bat`，启动根目录的 `guyun_app.py`。它与机器人新版界面是两个不同入口。
+双击 `start_synthesizer.bat`，启动根目录的 `guyun_app.py`。它与机器人新版界面是两个不同入口；对应的安装包见发布页的 v3.0.0（`古韵合成器_Setup_v3.0.0.exe`）。
 
 ### 方式四：Linux / Jetson 运行机器人界面
 
