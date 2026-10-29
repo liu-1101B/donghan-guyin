@@ -1,0 +1,9 @@
+# 让界面固定为「宣纸 + 墨色」的浅色主题。
+# 不加这段时，浏览器/系统切到深色模式会让 Streamlit 换成深色底 + 近白色字，
+# 而本项目的 CSS 把背景写死成宣纸色 → 浅字压浅底，标签全看不清。
+[theme]
+base = "light"
+primaryColor = "#a63d2a"
+backgroundColor = "#f5f2ea"
+secondaryBackgroundColor = "#fffefb"
+textColor = "#26221a"

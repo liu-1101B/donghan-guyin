@@ -1,5 +1,6 @@
 """Tests for the two supported LLM routes: API and local dictionary."""
 import json
+import os
 import unittest
 from unittest.mock import patch
 
@@ -97,6 +98,38 @@ class LLMModeTests(unittest.TestCase):
                 "https://api.example.invalid/v1", "test-model", "你好", []
             )
         self.assertTrue(post.call_args.kwargs["trust_env"])
+
+
+class LLMCredentialRefreshTests(unittest.TestCase):
+    """界面里填完 API 后必须立刻生效，不能等重启进程。"""
+
+    def tearDown(self):
+        # 环境变量由 patch.dict 还原，这里把模块常量同步回去
+        llm.refresh_credentials()
+
+    def test_refresh_picks_up_environment_values(self):
+        with patch.dict(
+            os.environ,
+            {
+                "LLM_BASE_URL": "http://127.0.0.1:9/v1/",
+                "LLM_MODEL": "typed-in-ui",
+                "LLM_API_KEY": "sk-ui-9999",
+            },
+            clear=False,
+        ):
+            info = llm.refresh_credentials()
+
+        self.assertEqual(info["base"], "http://127.0.0.1:9/v1")   # 去尾斜杠
+        self.assertEqual(info["model"], "typed-in-ui")
+        self.assertTrue(info["has_key"])
+        self.assertEqual(llm.API_KEY, "sk-ui-9999")
+        self.assertEqual(llm.LLM_MODEL, "typed-in-ui")
+
+    def test_empty_key_marks_api_mode_unavailable(self):
+        with patch.dict(os.environ, {"LLM_API_KEY": ""}, clear=False):
+            with patch.dict(os.environ, {"OPENAI_API_KEY": ""}, clear=False):
+                info = llm.refresh_credentials()
+        self.assertFalse(info["has_key"])
 
 
 if __name__ == "__main__":

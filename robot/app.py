@@ -40,7 +40,7 @@ _RELOAD_ORDER = [
     "services.llm_client", "services.tts_client", "services.asr_client",
     "language.turn_engine",
     "robot.session", "robot.voice_router", "robot.windows_audio",
-    "robot.audio_io",
+    "robot.audio_io", "robot.recorder",
 ]
 
 
@@ -107,6 +107,9 @@ from robot.session import Session
 from robot.voice_router import VoiceRouter
 from robot.audio_io import (AudioIO, bt_status, BT_MAC, _list_pw_sinks,
                             ensure_audible)
+from robot.recorder import hold_to_record, decode_wav
+from services.asr_client import (available_backends as asr_available_backends,
+                                 BACKEND_LABELS as _ASR_LABELS)
 from services import tts_client
 from language.ancient_tts import text_to_ipa, synthesize_ancient
 from phonology_db import lookup_char, EASTERN_HAN_DB
@@ -154,6 +157,131 @@ def _persist_llm_mode():
     preferences = _load_robot_preferences()
     preferences["llm_mode"] = mode
     _save_robot_preferences(preferences)
+
+
+# ---------- .env 读写（界面里直接填 API，不用去改文件） ----------
+ENV_FILE = os.path.join(ROOT, ".env")
+_ENV_KEYS = ("LLM_BASE_URL", "LLM_MODEL", "LLM_API_KEY")
+_DEFAULT_BASE = "https://api.openai.com/v1"
+_DEFAULT_MODEL = "gpt-4o-mini"
+
+
+def _read_env_file():
+    values = {}
+    try:
+        with open(ENV_FILE, encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                values[key.strip()] = value.strip()
+    except OSError:
+        pass
+    return values
+
+
+def _write_env_values(updates):
+    """只改这三个键；注释和其他键原样保留，写临时文件再原子替换。"""
+    try:
+        with open(ENV_FILE, encoding="utf-8") as handle:
+            lines = handle.read().splitlines()
+    except OSError:
+        lines = [
+            "# 大模型 API 设置（由界面写入；此文件已在 .gitignore 中，不要提交）",
+        ]
+    out, seen = [], set()
+    for line in lines:
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#") and "=" in stripped:
+            key = stripped.split("=", 1)[0].strip()
+            if key in updates:
+                out.append(f"{key}={updates[key]}")
+                seen.add(key)
+                continue
+        out.append(line)
+    for key, value in updates.items():
+        if key not in seen:
+            if out and out[-1].strip():
+                out.append("")
+            out.append(f"{key}={value}")
+    tmp = ENV_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as handle:
+        handle.write("\n".join(out).rstrip() + "\n")
+    os.replace(tmp, ENV_FILE)
+    for key, value in updates.items():
+        os.environ[key] = value
+    try:
+        from services import llm_client
+        llm_client.refresh_credentials()      # 立即生效，不必重启
+    except Exception:
+        pass
+
+
+def _current_llm_settings():
+    env = _read_env_file()
+    key = (os.environ.get("LLM_API_KEY") or os.environ.get("OPENAI_API_KEY")
+           or env.get("LLM_API_KEY") or "")
+    return {
+        "base": os.environ.get("LLM_BASE_URL") or env.get("LLM_BASE_URL") or _DEFAULT_BASE,
+        "model": os.environ.get("LLM_MODEL") or env.get("LLM_MODEL") or _DEFAULT_MODEL,
+        "key": key,
+    }
+
+
+def _mask_key(key):
+    if not key:
+        return "未配置"
+    return f"已配置（末四位 {key[-4:]}）" if len(key) >= 8 else "已配置（密钥太短？）"
+
+
+def _input_key():
+    """输入框的 key 带版本号（见 _set_input）。"""
+    return f"robot_input_v{st.session_state.get('_input_ver', 0)}"
+
+
+def _set_input(text):
+    """把文字放进输入框。
+
+    不能直接写 st.session_state["robot_input"]：用户一旦在页面上编辑过这个
+    输入框（比如删掉旧内容），客户端会把自己的值回传，覆盖掉服务端的赋值 →
+    录音识别结果就"写不进去"（实测：第一次能用，删一次内容之后再也不回填）。
+    换一个新 key 等价于换一个新控件，值必然生效。
+    """
+    st.session_state["_input_ver"] = int(st.session_state.get("_input_ver", 0)) + 1
+    st.session_state[_input_key()] = text
+
+
+def asr_backend_label(name):
+    return _ASR_LABELS.get(name, name)
+
+
+def _wav_levels(path):
+    """返回 (峰值 dBFS, 均方根 dBFS)。
+
+    用来把「麦克风根本没声音」和「有声音但没识别对」分开——否则两种情况
+    在界面上都是"没反应"，只能靠猜。
+    """
+    import math
+    import wave as _wave
+
+    import numpy as _np
+
+    try:
+        with _wave.open(path, "rb") as wf:
+            width = wf.getsampwidth()
+            frames = wf.readframes(wf.getnframes())
+    except Exception:
+        return -120.0, -120.0
+    if width != 2 or not frames:
+        return -120.0, -120.0
+    data = _np.frombuffer(frames, dtype="<i2").astype("float32") / 32768.0
+    if data.size == 0:
+        return -120.0, -120.0
+    peak = float(_np.max(_np.abs(data)))
+    rms = float(_np.sqrt(_np.mean(_np.square(data))))
+    db = lambda v: 20.0 * math.log10(v) if v > 1e-6 else -120.0
+    return db(peak), db(rms)
 
 
 # ---------- 后台生成（线程内不碰 Streamlit API，状态写 job 字典） ----------
@@ -253,6 +381,9 @@ def _gen_worker(job, session, cfg):
                     _ensure_playable(ai, spinner=False)
                 if job["play_ok"]:
                     ai.play_async(main["data"])
+                    # 记录实际投递目标，供 play_note 如实描述（选了具体设备
+                    # 就不该再写「默认输出设备」）
+                    job["play_target"] = getattr(ai, "playback_target", None)
             else:
                 job["play_ok"] = None
                 job["vol_note"] = None
@@ -407,14 +538,16 @@ st.markdown("""
     @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;600;900&family=Noto+Sans+SC:wght@300;400;500;700&display=swap');
     :root { --paper:#f5f2ea; --card:#fffefb; --line:#e4dccb; --ink:#26221a; --ink2:#5c5546; --ink3:#9a917e; --seal:#a63d2a; }
     html, body, [class*="css"] { font-family:'Noto Sans SC','PingFang SC',sans-serif; }
-    .stApp { background:var(--paper); }
+    /* 底色为宣纸时必须显式给文字上墨色：一旦 Streamlit 跟随系统切到深色主题，
+       它会往 .stApp 注入近白色的字色，浅字压浅底 = 标签全看不清。 */
+    .stApp { background:var(--paper); color:var(--ink); }
     .block-container { max-width:1060px; padding-top:2.4rem; padding-bottom:3rem; }
 
     .gi-title { font-family:'Noto Serif SC',serif; font-weight:900; font-size:2.1rem; color:var(--ink); letter-spacing:0.35em; }
     .gi-title::before { content:''; display:inline-block; width:0.55rem; height:0.55rem; background:var(--seal); margin-right:0.7rem; }
     .gi-sub { color:var(--ink3); font-size:0.85rem; letter-spacing:0.25em; margin:0.3rem 0 2.2rem 0; }
 
-    .gi-h { font-size:0.78rem; color:var(--ink3); letter-spacing:0.22em; margin:1.4rem 0 0.55rem 0; font-weight:500; }
+    .gi-h { font-size:0.78rem; color:var(--ink2); letter-spacing:0.22em; margin:1.4rem 0 0.55rem 0; font-weight:500; }
     .gi-gap { height:1.1rem; }
 
     /* ============ 根治整页变暗 ============
@@ -580,6 +713,12 @@ col1, col2 = st.columns([5, 7], gap="large")
 
 # ================= 左栏：输入与设置 =================
 with col1:
+    # 录音识别结果在组件回调里落进 _pending_input，这里换成新输入框落地
+    if st.session_state.get("_pending_input"):
+        _pend = st.session_state.pop("_pending_input")
+        print(f"[rec] 回填输入框: {_pend!r}", flush=True)
+        _set_input(_pend)
+
     st.markdown('<div class="gi-h">对话模式</div>', unsafe_allow_html=True)
     st.radio(
         "对话模式",
@@ -590,41 +729,123 @@ with col1:
         help="大模型 API：使用你配置的密钥获取高质量回答。\n本地词典：不调用大模型；词典无匹配时只播放输入的古汉语翻译。",
         label_visibility="collapsed",
     )
-    if st.session_state["llm_mode"] == "api" and not (
-        os.environ.get("LLM_API_KEY") or os.environ.get("OPENAI_API_KEY")
-    ):
-        st.warning("当前选择了大模型 API，但尚未配置密钥。请在项目根目录的 .env 中填写 LLM_API_KEY 并重启应用；未配置时将暂用本地词典。")
+    _llm_now = _current_llm_settings()
+
+    def _save_api_settings():
+        """button callback：改 .env 与 os.environ。
+
+        两句都不能省：
+        1) 必须在回调里写 session_state["api_key_input"]——在主脚本里写会撞上
+           「widget 已实例化，不能再改它的状态」，异常一抛 st.rerun() 就不执行，
+           页面会一直显示保存前的状态（文件其实已经写好了）。
+        2) 必须在回调里从 session_state 读值，不能靠 on_click 的 args：
+           用户打完字直接点按钮时，args 还是上一次渲染的旧值（实测把密钥吞了）。
+        """
+        base = st.session_state.get("api_base_input", "")
+        model = st.session_state.get("api_model_input", "")
+        key = st.session_state.get("api_key_input", "")
+        updates = {"LLM_BASE_URL": (base or "").strip() or _DEFAULT_BASE,
+                   "LLM_MODEL": (model or "").strip() or _DEFAULT_MODEL}
+        if (key or "").strip():
+            updates["LLM_API_KEY"] = key.strip()
+        try:
+            _write_env_values(updates)
+            st.session_state["_api_notice"] = ("ok", "已写入 .env，立即生效。")
+            st.session_state["api_key_input"] = ""
+        except Exception as exc:
+            st.session_state["_api_notice"] = ("err", f"保存失败：{exc}")
+
+    def _clear_api_key():
+        try:
+            _write_env_values({"LLM_API_KEY": ""})
+            st.session_state["_api_notice"] = ("ok", "已清除密钥，会自动退回本地词典。")
+        except Exception as exc:
+            st.session_state["_api_notice"] = ("err", f"清除失败：{exc}")
+
+    _notice = st.session_state.pop("_api_notice", None)
+    if _notice:
+        (st.success if _notice[0] == "ok" else st.error)(_notice[1])
+    if st.session_state["llm_mode"] == "api" and not _llm_now["key"]:
+        st.warning("当前选择了大模型 API，但还没有密钥。在下面「大模型 API 设置」里填写即可，"
+                   "不用改文件；未配置时暂时使用本地词典。")
+    with st.expander("大模型 API 设置", expanded=(
+        st.session_state["llm_mode"] == "api" and not _llm_now["key"]
+    )):
+        st.caption(f"当前：{_mask_key(_llm_now['key'])}｜{_llm_now['model']}｜{_llm_now['base']}")
+        _base_in = st.text_input("接口地址", value=_llm_now["base"],
+                                 key="api_base_input",
+                                 help="OpenAI 兼容的 /v1 地址，例如 https://api.deepseek.com/v1")
+        _model_in = st.text_input("模型名", value=_llm_now["model"],
+                                  key="api_model_input",
+                                  help="例如 deepseek-chat、gpt-4o-mini、qwen-plus")
+        _key_in = st.text_input("密钥", value="", type="password",
+                                key="api_key_input",
+                                placeholder="粘贴你的 API Key（留空 = 不修改当前密钥）",
+                                help="只写进本机 .env，不会提交到 Git")
+        _c1, _c2 = st.columns(2)
+        _c1.button("保存", use_container_width=True, key="api_save_btn",
+                   on_click=_save_api_settings,
+                   help="写入 .env 并立即生效")
+        _c2.button("清除密钥", use_container_width=True, key="api_clear_btn",
+                   on_click=_clear_api_key)
     st.markdown('<div class="gi-h">输入</div>', unsafe_allow_html=True)
     st.text_area("输入", placeholder="说点什么，白话或文言都可以…",
-                 height=120, key="robot_input", label_visibility="collapsed")
+                 height=120, key=_input_key(), label_visibility="collapsed")
 
-    def _mic_record():
-        model_dir = os.path.join(ROOT, "models", "vosk-small-cn")
-        if not os.path.isdir(model_dir):
-            st.error(
-                "本地语音识别模型尚未安装。文字输入和语音合成功能仍可使用；"
-                "请运行 start.bat 下载模型，或按 README 手动安装到 models/vosk-small-cn。"
-            )
-            return
-        ai = get_audio_io()
-        rec_path = os.path.join(OUT_DIR, "app_rec.wav")
-        if not ai.record(5.0, rec_path):
-            st.toast("录音失败：请检查 Windows 麦克风和隐私权限", icon="⚠️")
-            return
-        try:
-            asr = get_asr()
-            text = asr.transcribe_wav(rec_path)
-        except Exception as exc:
-            st.error(f"初始化语音识别失败：{exc}")
-            return
-        if text:
-            st.session_state.robot_input = text
-            st.toast(f"识别：{text}")
+    # 按住说话：浏览器采音（PCM）→ 松手 → 本地 Vosk 识别 → 回填输入框。
+    # 服务端 arecord 只能录固定时长，且要服务器上有麦克风；改成浏览器录音后
+    # 固定 5 秒的限制没有了，也不依赖服务器音频输入设备。
+    _rec_value = hold_to_record()
+    if (isinstance(_rec_value, dict) and _rec_value.get("nonce")
+            and _rec_value.get("nonce") != st.session_state.get("_rec_nonce")):
+        st.session_state["_rec_nonce"] = _rec_value.get("nonce")
+        print(f"[rec] 收到录音 nonce={_rec_value.get('nonce')} "
+              f"bytes={len(_rec_value.get('wav') or '')} "
+              f"ms={_rec_value.get('duration_ms')}", flush=True)
+        _model_dir = os.path.join(ROOT, "models", "vosk-small-cn")
+        if not os.path.isdir(_model_dir):
+            st.session_state["_rec_status"] = (
+                "err", "本地语音识别模型未安装（models/vosk-small-cn），语音输入不可用。")
         else:
-            st.toast("未听清，请再说一次", icon="⚠️")
-
-    st.button("录音 5 秒", on_click=_mic_record, use_container_width=True,
-              help="对麦克风说话 5 秒，本地识别后填入输入框")
+            _text = ""
+            _level = ""
+            _secs = 0.0
+            try:
+                _path, _secs = decode_wav(
+                    _rec_value, os.path.join(OUT_DIR, "ui_rec.wav")
+                )
+                _peak, _rms = _wav_levels(_path)
+                _level = (f"峰值 {_peak:.0f} dBFS / 均方根 {_rms:.0f} dBFS")
+                _text = get_asr().transcribe_wav(_path)
+            except Exception as exc:
+                st.session_state["_rec_status"] = ("err", f"识别失败：{exc}")
+                _text = None
+            print(f"[rec] 时长 {_secs:.1f}s {_level} 识别={_text!r}", flush=True)
+            if _text is None:
+                pass
+            elif _text:
+                st.session_state["_rec_status"] = (
+                    "ok", f"已录 {_secs:.1f} 秒（{_level}）· 识别：{_text}")
+                st.session_state["_pending_input"] = _text
+                st.rerun()
+            elif _peak < -45:
+                st.session_state["_rec_status"] = (
+                    "err",
+                    f"录到 {_secs:.1f} 秒，但几乎没有声音（{_level}）。"
+                    "检查 Windows「声音设置」里的默认输入设备，以及 Chrome 的麦克风权限。")
+            else:
+                st.session_state["_rec_status"] = (
+                    "warn",
+                    f"已录 {_secs:.1f} 秒（{_level}），但没识别出字词。"
+                    "靠近麦克风、说得慢一点再试；小模型对生僻词本来就弱。")
+    _rec_status = st.session_state.get("_rec_status")
+    if _rec_status:
+        {"ok": st.success, "warn": st.warning, "err": st.error}.get(
+            _rec_status[0], st.info)(_rec_status[1])
+    # 只做目录探测，不加载模型（加载要 1 秒多，别拖慢首屏）
+    _engines = asr_available_backends()
+    st.caption("识别引擎：" + (
+        asr_backend_label(_engines[0]) if _engines else "未安装模型（models/ 下缺 sense-voice）"))
 
     st.markdown('<div class="gi-h">播放设备</div>', unsafe_allow_html=True)
     # 列出当前系统可用的输出设备；"自动"=跟随系统默认输出。
@@ -675,7 +896,7 @@ with col1:
     def _generate():
         """登记后台任务并立即返回（LLM+TTS 在后台线程跑，
         轮询 fragment 跟进进度）→ 生成期间整页不再变暗、控件可用"""
-        text = (st.session_state.get("robot_input") or "").strip()
+        text = (st.session_state.get(_input_key()) or "").strip()
         if not text:
             st.session_state.gen_error = "请输入文本（或录音）"
             return
@@ -702,7 +923,8 @@ with col1:
         router.voice, router.rate = cfg["voice"], cfg["rate"]
         router.speed, router.pitch = cfg["speed"], cfg["pitch"]
         ss.gen_error = None
-        ss.robot_input = ""
+        ss.pop("_rec_status", None)   # 已经拿去生成了，录音状态行就没意义了
+        _set_input("")     # 换成空的新输入框（同 _set_input 的理由）
         job = {"phase": "start", "result": None, "play_ok": None,
                "user": text, "started": time.time()}
         ss.gen_job = job
@@ -791,10 +1013,10 @@ with col2:
         ss.turns = ss.turns[-session.max_turns:]
         vol = job.get("vol_note")
         if job.get("play_ok") is True:
-            ss.play_note = (
-                ("已朗读古汉语翻译" if not payload["reply"] else "已朗读到默认输出设备")
-                + (f"（{vol}）" if vol else "")
-            )
+            dest = job.get("play_target")
+            where = f"「{dest}」" if dest else "默认输出设备"
+            core = "已朗读输入的古汉语翻译到" if not payload["reply"] else "已朗读到"
+            ss.play_note = core + where + (f"（{vol}）" if vol else "")
         elif job.get("play_ok") is False:
             ss.play_note = "已生成（自动朗读失败，可点「设备播放」重试）"
         st.rerun(scope="app")

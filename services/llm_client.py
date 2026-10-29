@@ -49,6 +49,20 @@ LLM_BASE = os.environ.get("LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/
 LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-4o-mini")
 API_KEY = os.environ.get("LLM_API_KEY", "") or os.environ.get("OPENAI_API_KEY", "")
 
+
+def refresh_credentials() -> dict:
+    """Re-read the three settings from the environment.
+
+    The web UI writes them into .env and updates os.environ, then calls this;
+    module-level constants are captured at import time, so without it a key
+    typed into the page would only take effect after restarting the process.
+    """
+    global LLM_BASE, LLM_MODEL, API_KEY
+    LLM_BASE = os.environ.get("LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+    LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-4o-mini")
+    API_KEY = os.environ.get("LLM_API_KEY", "") or os.environ.get("OPENAI_API_KEY", "")
+    return {"base": LLM_BASE, "model": LLM_MODEL, "has_key": bool(API_KEY)}
+
 # 本地回退用的固定应答语料（常见意图 → (文言应答, 白话应答)）
 _LOCAL_REPLIES = [
     (("你好", "您好", "嗨", "哈喽", "在吗", "你是谁"),
