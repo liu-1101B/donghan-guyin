@@ -19,7 +19,7 @@ if not exist "%PYTHON%" (
         python -m venv .venv
     )
     if errorlevel 1 (
-        echo [错误] 创建虚拟环境失败。请安装 Python 3.10-3.12 并勾选 Add Python to PATH。
+        echo [错误] 创建虚拟环境失败。请安装 Python 3.10 及以上版本并勾选 Add Python to PATH。
         pause
         exit /b 1
     )
@@ -43,18 +43,21 @@ if errorlevel 1 (
     )
 )
 
-if not exist "models\vosk-small-cn\am\final.mdl" (
+if not exist "models\sense-voice\tokens.txt" (
+    if exist "models\vosk-small-cn\am\final.mdl" goto has_model
     echo.
-    echo [提示] 未发现 Vosk 中文语音识别模型。
-    echo 文字输入、文言回答和语音合成仍可使用；录音转文字需要该模型（约 44 MB）。
-    choice /C YN /M "是否立即下载 Vosk 中文模型"
+    echo [提示] 未发现语音识别模型。
+    echo 文字输入、文言回答和语音合成不需要模型；语音输入（按住说话）需要。
+    echo 推荐 SenseVoice（中英日韩粤，约 228 MB，中文准确率明显高于 Vosk 小模型）。
+    choice /C YN /M "是否立即从镜像下载 SenseVoice 模型"
     if errorlevel 2 goto no_model
-    echo 正在下载并解压模型...
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; New-Item -ItemType Directory -Force -Path 'models' | Out-Null; Invoke-WebRequest 'https://alphacephei.com/vosk/models/vosk-model-small-cn-0.22.zip' -OutFile 'models\vosk-model-small-cn-0.22.zip'; Expand-Archive -Force 'models\vosk-model-small-cn-0.22.zip' 'models'; if (Test-Path 'models\vosk-small-cn') { Remove-Item -Recurse -Force 'models\vosk-small-cn' }; Move-Item 'models\vosk-model-small-cn-0.22' 'models\vosk-small-cn'; Remove-Item -Force 'models\vosk-model-small-cn-0.22.zip'"
+    echo 正在下载模型（约 228 MB，来自 hf-mirror）...
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $d='models\sense-voice'; New-Item -ItemType Directory -Force -Path $d | Out-Null; $b='https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main'; Invoke-WebRequest \"$b/model.int8.onnx\" -OutFile \"$d/model.int8.onnx\"; Invoke-WebRequest \"$b/tokens.txt\" -OutFile \"$d/tokens.txt\""
     if errorlevel 1 (
         echo [警告] 模型下载失败。机器人仍会启动，文字输入可用；以后可重新运行 start.bat 安装模型。
     )
 )
+:has_model
 :no_model
 
 echo.

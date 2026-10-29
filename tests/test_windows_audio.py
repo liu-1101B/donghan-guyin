@@ -127,5 +127,78 @@ class WindowsAudioDeviceTests(unittest.TestCase):
             self.assertEqual(self.sd.written_frames, 5000)
 
 
+class _MultiApiSoundDevice:
+    """真实 Windows 的样子：同一只音箱经 MME/DS/WASAPI/WDM-KS 各列一次。"""
+
+    NAME = "扬声器 (K02BS)"
+    BTHF = ("耳机 (@System32\\drivers\\bthhfenum.sys,#2;%1 Hands-Free%0\r\n;"
+            "(Relink脑机接口))")
+
+    def __init__(self):
+        self.default = _FakeDefault()
+        self.default.device = (0, 2)          # 默认输出 = WASAPI 的那条
+        self._apis = [
+            {"name": "MME"}, {"name": "Windows DirectSound"},
+            {"name": "Windows WASAPI"}, {"name": "Windows WDM-KS"},
+        ]
+        self._devices = [
+            {"name": self.NAME, "hostapi": 0, "max_input_channels": 0,
+             "max_output_channels": 2, "default_samplerate": 48000},
+            {"name": self.NAME, "hostapi": 1, "max_input_channels": 0,
+             "max_output_channels": 2, "default_samplerate": 48000},
+            {"name": self.NAME, "hostapi": 2, "max_input_channels": 0,
+             "max_output_channels": 2, "default_samplerate": 48000},
+            {"name": self.NAME, "hostapi": 3, "max_input_channels": 0,
+             "max_output_channels": 2, "default_samplerate": 48000},
+            {"name": "耳机 ()", "hostapi": 3, "max_input_channels": 0,
+             "max_output_channels": 2, "default_samplerate": 48000},
+            {"name": "耳机 ()", "hostapi": 3, "max_input_channels": 0,
+             "max_output_channels": 2, "default_samplerate": 48000},
+            {"name": self.BTHF, "hostapi": 3, "max_input_channels": 0,
+             "max_output_channels": 2, "default_samplerate": 48000},
+        ]
+
+    def query_hostapis(self):
+        return self._apis
+
+    def query_devices(self, device=None, kind=None):
+        if device is not None:
+            return self._devices[int(device)]
+        return self._devices
+
+
+class WindowsDeviceListTests(unittest.TestCase):
+    """下拉框必须在 Windows 上可读、可区分、不重复。"""
+
+    def setUp(self):
+        self.sd = _MultiApiSoundDevice()
+
+    def test_same_endpoint_across_host_apis_collapses_to_one(self):
+        listed = list_output_devices(self.sd)
+        k02 = [row for row in listed if row[1].startswith("扬声器 (K02BS)")]
+        self.assertEqual(len(k02), 1, f"同一端点重复出现: {k02}")
+        # 保留下来的应是首选 host API（WASAPI）那条，并标为默认
+        self.assertEqual(k02[0][0], 2)
+        self.assertTrue(k02[0][2])
+
+    def test_bluetooth_handsfree_name_becomes_readable(self):
+        labels = [row[1] for row in list_output_devices(self.sd)]
+        self.assertIn("Relink脑机接口（蓝牙·免提）", labels)
+        self.assertFalse(any("\r" in label or "\n" in label for label in labels))
+
+    def test_identical_names_stay_distinguishable_and_resolvable(self):
+        listed = list_output_devices(self.sd)
+        unnamed = [row for row in listed if row[1].startswith("耳机（未命名）")]
+        self.assertEqual(len(unnamed), 2)
+        self.assertEqual(len({row[1] for row in unnamed}), 2)
+        for index, label, _default, _vol in unnamed:
+            self.assertEqual(resolve_device(label, "output", self.sd), index)
+
+    def test_resolves_cleaned_bluetooth_label_back_to_its_endpoint(self):
+        self.assertEqual(
+            resolve_device("Relink脑机接口（蓝牙·免提）", "output", self.sd), 6
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -18,7 +18,7 @@ if not exist "%PYTHON%" (
         python -m venv .venv
     )
     if errorlevel 1 (
-        echo [错误] 创建虚拟环境失败，请安装 Python 3.10-3.12。
+        echo [错误] 创建虚拟环境失败，请安装 Python 3.10 及以上版本。
         pause
         exit /b 1
     )

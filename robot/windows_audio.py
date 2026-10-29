@@ -8,10 +8,131 @@ from __future__ import annotations
 
 import io
 import os
+import re
 import sys
 import threading
 import wave
+from collections import defaultdict
 from typing import Any
+
+# PortAudio 在 Windows 上会通过多个 host API 暴露同一个物理端点
+# （MME / DirectSound / WASAPI / WDM-KS），于是同一只音箱会出现 3–4 次；
+# 音质与可控性以 WASAPI 最好，WDM-KS 覆盖蓝牙等 WASAPI 不列出的端点。
+_HOST_API_PREFERENCE = ("wasapi", "wdm-ks", "directsound", "mme")
+
+# 蓝牙免提端点暴露的是驱动字符串：
+# '耳机 (@System32\\drivers\\bthhfenum.sys,#2;%1 Hands-Free%0\r\n;(Relink脑机接口))'
+_BTHFENUM_RE = re.compile(
+    r"\(@System32\\+drivers\\+bthhfenum\.sys[^()]*;\s*\(([^()]*)\)\s*\)\s*$",
+    re.IGNORECASE,
+)
+_INDEX_SUFFIX_RE = re.compile(r"\s*·\s*#(\d+)\s*$")
+
+# 别名端点：语义等同于「自动跟随系统默认」，有真实设备时不进下拉框
+_ALIAS_LABELS = {
+    "Microsoft 声音映射器 - Output",
+    "Microsoft Sound Mapper - Output",
+    "主声音驱动程序",
+    "Primary Sound Driver",
+}
+
+
+def _clean_device_name(name: Any) -> str:
+    """把 PortAudio 的原始设备名变成人能选的名字。
+
+    - 折叠 \\r\\n 与多余空白（否则下拉框里会出现换行）
+    - 蓝牙免提的驱动串 → '设备名（蓝牙·免提）'
+    - '耳机 ()' → '耳机（未命名）'
+    """
+    text = re.sub(r"\s+", " ", str(name or "")).strip()
+    match = _BTHFENUM_RE.search(text)
+    if match:
+        tail = match.group(1).strip()
+        if tail:
+            return f"{tail}（蓝牙·免提）"
+        kind = "耳机" if text.startswith(("耳机", "Headphones", "Headset")) else "输出"
+        return f"{kind}（蓝牙·免提）"
+    if text.endswith("()"):
+        return f"{text[:-2].strip()}（未命名）"
+    return text
+
+
+def _host_api_ranks(sd) -> dict:
+    """hostapi 索引 → 偏好排名（0 最好）。认不出的一律排最后。"""
+    try:
+        apis = list(sd.query_hostapis())
+    except Exception:
+        return {}
+    ranks = {}
+    for index, api in enumerate(apis):
+        label = str(api.get("name", "")).lower()
+        for rank, key in enumerate(_HOST_API_PREFERENCE):
+            if key in label:
+                ranks[index] = rank
+                break
+        else:
+            ranks[index] = len(_HOST_API_PREFERENCE)
+    return ranks
+
+
+def _output_rows(sd) -> list:
+    """(index, cleaned name, hostapi rank, hostapi index) for every output device."""
+    devices = sd.query_devices()
+    ranks = _host_api_ranks(sd)
+    rows = []
+    for index, device in enumerate(devices):
+        if int(device.get("max_output_channels", 0) or 0) <= 0:
+            continue
+        api = int(device.get("hostapi", 0) or 0)
+        rows.append(
+            (index, _clean_device_name(device.get("name")), ranks.get(api, 99), api)
+        )
+    return rows
+
+
+def _unique_output_rows(sd) -> list:
+    """同一个物理端点只留一条，保证蓝牙等只在 WDM-KS 出现的端点不丢。
+
+    - 跨 host API 同名 → 只留偏好最高的那条（避免 K02BS 出现 4 次）
+    - 同一 host API 内同名 → 全部保留（是不同的端点，靠 #index 区分）
+    - MME 把长名字截断到 31 字符，会与完整名并存 → 丢掉被截断的那条
+    """
+    grouped = defaultdict(list)
+    for row in _output_rows(sd):
+        grouped[row[1]].append(row)
+
+    picked = []
+    for rows in grouped.values():
+        if len({row[3] for row in rows}) > 1:
+            picked.append(min(rows, key=lambda row: (row[2], row[0])))
+        else:
+            picked.extend(rows)
+    picked.sort(key=lambda row: row[0])
+
+    names = [row[1] for row in picked]
+    truncated = set()
+    for name in names:
+        for other in names:
+            if other != name and len(name) >= 12 and other.startswith(name):
+                truncated.add(name)
+                break
+    if truncated:
+        picked = [row for row in picked if row[1] not in truncated]
+
+    seen = defaultdict(int)
+    for row in picked:
+        seen[row[1]] += 1
+    unique = []
+    for index, name, _rank, _api in picked:
+        label = f"{name} · #{index}" if seen[name] > 1 else name
+        unique.append((index, label))
+
+    # MME/DirectSound 的「声音映射器 / 主声音驱动程序」只是别名，
+    # 语义等同于「自动跟随系统默认」；有真实设备时不必占位。
+    if len(unique) > 1:
+        unique = [row for row in unique
+                  if row[1].strip() not in _ALIAS_LABELS]
+    return unique
 
 
 def _safe_print(message: str) -> None:
@@ -64,11 +185,46 @@ def resolve_device(configured: str | None, kind: str, sd_module=None):
         configured = ""
 
     if configured and configured.lower() not in {"default", "auto", "自动"}:
-        wanted = configured.casefold()
-        for index, device in enumerate(devices):
-            if int(device.get(direction_key, 0) or 0) > 0:
-                if wanted in str(device.get("name", "")).casefold():
+        # 界面里的名字可能带 ' · #12' 后缀（同名端点区分用）：能回指就精确回指
+        suffix = _INDEX_SUFFIX_RE.search(configured)
+        base = _INDEX_SUFFIX_RE.sub("", configured).strip()
+        if suffix:
+            index = int(suffix.group(1))
+            try:
+                device = devices[index]
+                if (int(device.get(direction_key, 0) or 0) > 0
+                        and _clean_device_name(device.get("name")) == base):
                     return index
+            except Exception:
+                pass
+
+        wanted = base.casefold()
+        # 输出设备以「下拉框里显示的那条」为准——否则同名端点会被
+        # 按 devices 顺序解析回 MME 的第一条，和界面显示的(比如) WASAPI 不一致。
+        if kind == "output":
+            rows = _unique_output_rows(sd)
+            for index, label in rows:
+                if label == configured:
+                    return index
+            for index, label in rows:
+                if wanted in label.casefold():
+                    return index
+
+        exact = None
+        partial = None
+        for index, device in enumerate(devices):
+            if int(device.get(direction_key, 0) or 0) <= 0:
+                continue
+            name = _clean_device_name(device.get("name")).casefold()
+            raw = str(device.get("name", "")).casefold()
+            if wanted == name:
+                exact = index if exact is None else exact
+            elif partial is None and (wanted in name or wanted in raw):
+                partial = index
+        if exact is not None:
+            return exact
+        if partial is not None:
+            return partial
 
     default_id = _default_device_id(sd, kind)
     if default_id is not None:
@@ -90,15 +246,30 @@ def list_output_devices(sd_module=None) -> list[tuple[int, str, bool, None]]:
     try:
         sd = _get_sounddevice(sd_module)
         default_id = _default_device_id(sd, "output")
+        default_name = None
+        if default_id is not None:
+            try:
+                default_name = _clean_device_name(
+                    sd.query_devices(default_id).get("name")
+                )
+            except Exception:
+                default_name = None
+
+        rows = _unique_output_rows(sd)
+        occurrences = {}
+        for _index, label in rows:
+            base = _INDEX_SUFFIX_RE.sub("", label)
+            occurrences[base] = occurrences.get(base, 0) + 1
+
         result = []
-        for index, device in enumerate(sd.query_devices()):
-            if int(device.get("max_output_channels", 0) or 0) > 0:
-                result.append((
-                    index,
-                    str(device.get("name", f"Output {index}")),
-                    index == default_id,
-                    None,
-                ))
+        for index, label in rows:
+            base = _INDEX_SUFFIX_RE.sub("", label)
+            is_default = index == default_id or (
+                default_name is not None
+                and base == default_name
+                and occurrences.get(base, 0) == 1
+            )
+            result.append((index, label, is_default, None))
         return result
     except Exception:
         # The UI can still launch without audio drivers; recording/playback will
