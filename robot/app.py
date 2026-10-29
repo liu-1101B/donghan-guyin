@@ -802,10 +802,10 @@ with col1:
         print(f"[rec] 收到录音 nonce={_rec_value.get('nonce')} "
               f"bytes={len(_rec_value.get('wav') or '')} "
               f"ms={_rec_value.get('duration_ms')}", flush=True)
-        _model_dir = os.path.join(ROOT, "models", "vosk-small-cn")
-        if not os.path.isdir(_model_dir):
+        _engines_now = asr_available_backends()
+        if not _engines_now:
             st.session_state["_rec_status"] = (
-                "err", "本地语音识别模型未安装（models/vosk-small-cn），语音输入不可用。")
+                "err", "本地语音识别模型未安装（models/sense-voice/），语音输入不可用。")
         else:
             _text = ""
             _level = ""
