@@ -12,7 +12,52 @@ from language.history import (TIMELINE, get_period, get_system, lookup_reading,
                               dataset_available, lookup_sinica_ccr_records,
                               sinica_ccr_record_count, sinica_ccr_package_counts,
                               lookup_scholar_reading, scholar_character_count,
-                              scholar_coverage)
+                              scholar_coverage, SCHOLAR_SYSTEMS)
+
+
+class SinicaScholarSystemsTests(unittest.TestCase):
+    """六个中古学者方案共用的契约。"""
+
+    def test_all_six_systems_are_registered_and_queryable(self):
+        self.assertEqual(len(SCHOLAR_SYSTEMS), 6)
+        for system_id in SCHOLAR_SYSTEMS:
+            reading = lookup_reading("東", system_id)
+            self.assertTrue(reading.available, system_id)
+            self.assertEqual(reading.source_status, "scholar_reconstruction", system_id)
+
+    def test_all_systems_appear_in_middle_chinese_filter(self):
+        ids = {s.id for s in systems_for_period("middle_chinese",
+                                                include_metadata_only=False)}
+        for system_id in SCHOLAR_SYSTEMS:
+            self.assertIn(system_id, ids)
+
+    def test_systems_disagree_showing_they_are_separate_scholars(self):
+        # 同一个「融」，六家拟音不该被折叠成同一个值
+        values = {lookup_reading("融", sid).ipa for sid in SCHOLAR_SYSTEMS}
+        self.assertGreater(len(values), 3)
+
+    def test_no_system_invents_a_tone(self):
+        for system_id in SCHOLAR_SYSTEMS:
+            self.assertIsNone(lookup_reading("東", system_id).tone, system_id)
+
+    def test_lifanggui_ji_initial_is_not_treated_as_defect(self):
+        # 李方桂用 ji- 表示喻母，是合法声母；启发式曾误判它 974 行
+        reading = lookup_reading("融", "lifanggui_mc")
+        self.assertTrue(reading.available)
+        self.assertEqual(reading.initial, "ji")
+        self.assertFalse(reading.source_status == "source_record_defect")
+        cov = scholar_coverage("lifanggui_mc")
+        self.assertEqual(cov["skipped_suspect_initial"], 0)
+
+    def test_vowel_initial_rows_are_still_caught(self):
+        # 王力 13 行、周法高 5 行确属错位，规则收紧后仍要抓到
+        self.assertEqual(scholar_coverage("wangli_mc")["skipped_suspect_initial"], 13)
+        self.assertEqual(scholar_coverage("zhoufagao_mc")["skipped_suspect_initial"], 5)
+
+    def test_karlgren_has_lower_coverage_than_others(self):
+        # 高本漢表只有 7685 条，覆盖率明显更低，属已知事实
+        self.assertLess(scholar_character_count("karlgren_mc"), 10000)
+        self.assertGreater(scholar_character_count("wangli_mc"), 19000)
 
 
 class WangLiMiddleChineseTests(unittest.TestCase):

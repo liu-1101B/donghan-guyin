@@ -28,15 +28,16 @@ DATASET_OLD_CHINESE = "sinica_ccr_old_chinese"
 # system_id -> Sinica 的 system 字段
 SCHOLAR_SYSTEMS = {
     "wangli_mc": "王力系統",
-}
-
-# 同一个数据包里还躺着这些中古学者方案，接入时各加一行即可
-AVAILABLE_BUT_UNREGISTERED = {
     "dongtonghe_mc": "董同龢系統",
     "zhoufagao_mc": "周法高系統",
     "lifanggui_mc": "李方桂系統",
     "chenxinxiong_mc": "陳新雄系統",
+    "karlgren_mc": "高本漢系統",
 }
+
+# 同一数据包里另有「时代韵部资料」（按时代分韵部，不是逐字拟音，，
+# 韻母为空），接入时不要把它当拟音处理。
+NOT_A_RECONSTRUCTION = {"时代韵部资料"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,13 +65,17 @@ class ScholarReading:
 
 
 # 声母只可能是辅音（含 j/w 这类半元音）外加表示零声母的 "0"。
-# 源表里有 13 行把韵母值填进了聲母列（如「反」的声母写成 ǐɐn），
+# 源表里有若干行把韵母值填进了聲母列（王力 13 行、周法高 5 行），
 # 拼出来的 IPA 会是假的，所以必须识别出来并置空。
+#
+# 判据用「**以元音开头**」，不能用「含元音」：
+# 李方桂方案用 ji- 表示喻母（如「融」= ji + ung），含元音却是合法声母，
+# 用「含元音」会误判它 974 行。
 _VOWEL_CHARS = set("aeiouɑɛɔɐəɯyæɒœʌɤɨʉɘɵɪʊ")
 
 
-def _looks_like_final(value: str) -> bool:
-    return any(ch in _VOWEL_CHARS for ch in value)
+def _initial_looks_like_final(value: str) -> bool:
+    return bool(value) and value[0] in _VOWEL_CHARS
 
 
 def _compose_ipa(initial: str, final: str) -> str:
@@ -81,6 +86,32 @@ def _compose_ipa(initial: str, final: str) -> str:
 
 # 加载时被跳过的记录数（以及原因），用于在覆盖率报告里如实交代差额
 _SKIPPED: dict[str, dict[str, int]] = {}
+
+
+@lru_cache(maxsize=2)
+def _bundle_rows(path: str | None) -> dict[str, tuple[dict, ...]]:
+    """把整包按 Sinica 的 system 分组，只解析一次。
+
+    六个体系各扫一遍 6.6 MB 的包要 36 秒，分组后总耗时等于一次解析。
+    """
+    bundle = Path(path) if path else BUNDLE_PATH
+    if not bundle.is_file():
+        raise FileNotFoundError(
+            f"找不到 Sinica 数据包：{bundle}；"
+            "请先运行 scripts/import_sinica_ccr.py 或从仓库恢复 data/historical/sinica_ccr_import/")
+    grouped: dict[str, list[dict]] = {}
+    with gzip.open(bundle, "rt", encoding="utf-8") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            if record.get("dataset_id") != DATASET_MIDDLE_CHINESE:
+                continue
+            system = record.get("system")
+            if system in NOT_A_RECONSTRUCTION:
+                continue
+            grouped.setdefault(system, []).append(record)
+    return {name: tuple(rows) for name, rows in grouped.items()}
 
 
 @lru_cache(maxsize=4)
@@ -98,46 +129,38 @@ def load_scholar_readings(system_id: str,
 
     readings: list[ScholarReading] = []
     skipped = {"matched": 0, "not_single_char": 0, "empty_final": 0, "suspect_initial": 0}
-    with gzip.open(bundle, "rt", encoding="utf-8") as handle:
-        for line in handle:
-            if not line.strip():
-                continue
-            record = json.loads(line)
-            if record.get("dataset_id") != DATASET_MIDDLE_CHINESE:
-                continue
-            if record.get("system") != system_name:
-                continue
-            skipped["matched"] += 1
-            fields = record.get("fields") or {}
-            character = (record.get("character") or fields.get("字") or "").strip()
-            if len(character) != 1:
-                skipped["not_single_char"] += 1
-                continue
-            initial = (fields.get("聲母") or "").strip()
-            final = (fields.get("韻母") or "").strip()
-            if not final:
-                skipped["empty_final"] += 1
-                continue
-            # 源表有少量行把韵母值填进了聲母列，拼出来会是假 IPA
-            suspect = bool(initial) and _looks_like_final(initial)
-            if suspect:
-                skipped["suspect_initial"] += 1
-            readings.append(ScholarReading(
-                character=character,
-                system_id=system_id,
-                system_name=system_name,
-                initial=initial,
-                final=final,
-                ipa="" if suspect else _compose_ipa(initial, final),
-                source_workbook=record.get("source_workbook", ""),
-                source_sheet=record.get("source_sheet", ""),
-                source_row=int(record.get("source_row") or 0),
-                source_sha256=record.get("source_workbook_sha256", ""),
-                license_mark=record.get("license_mark", ""),
-                suspect=suspect,
-                note=("源表聲母列疑似错位（填入的是韵母值），未生成 IPA。"
-                      if suspect else ""),
-            ))
+    for record in _bundle_rows(path).get(system_name, ()):
+        skipped["matched"] += 1
+        fields = record.get("fields") or {}
+        character = (record.get("character") or fields.get("字") or "").strip()
+        if len(character) != 1:
+            skipped["not_single_char"] += 1
+            continue
+        initial = (fields.get("聲母") or "").strip()
+        final = (fields.get("韻母") or "").strip()
+        if not final:
+            skipped["empty_final"] += 1
+            continue
+        # 源表有少量行把韵母值填进了聲母列，拼出来会是假 IPA
+        suspect = _initial_looks_like_final(initial)
+        if suspect:
+            skipped["suspect_initial"] += 1
+        readings.append(ScholarReading(
+            character=character,
+            system_id=system_id,
+            system_name=system_name,
+            initial=initial,
+            final=final,
+            ipa="" if suspect else _compose_ipa(initial, final),
+            source_workbook=record.get("source_workbook", ""),
+            source_sheet=record.get("source_sheet", ""),
+            source_row=int(record.get("source_row") or 0),
+            source_sha256=record.get("source_workbook_sha256", ""),
+            license_mark=record.get("license_mark", ""),
+            suspect=suspect,
+            note=("源表聲母列疑似错位（填入的是韵母值），未生成 IPA。"
+                  if suspect else ""),
+        ))
     _SKIPPED[system_id] = skipped
     return tuple(readings)
 

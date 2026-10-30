@@ -46,28 +46,35 @@ $env:PYTHONUTF8 = "1"; $env:PYTHONIOENCODING = "utf-8"
 
 ### 第二阶段（进行中）
 
-**已完成**：接入第一个学者体系 —— 王力中古（`wangli_mc`）
+**已完成**：接入**六家**中古学者拟音（Sinica 汉字构形资料库，PDM，数据已在仓库内）
 
-- 数据源已在仓库内：`data/historical/sinica_ccr_import/sinica_ccr_records.jsonl.gz`
-  （Sinica 漢字構形資料庫，PDM）
-- 25521 条匹配 → 25508 条加载 → **19523 个去重字**、4772 个多音字
-- 接口：`lookup_reading(ch, "wangli_mc")`、`lookup_scholar_reading(ch, "wangli_mc")`、
-  `scholar_coverage("wangli_mc")`
-- 覆盖率报告：`python scripts/coverage_report.py`
+| 体系 | 去重字数 | 记录 | 错位行 |
+|---|---|---|---|
+| `wangli_mc` 王力 | 19523 | 25508 | 13 |
+| `dongtonghe_mc` 董同龢 | 19534 | 25515 | 0 |
+| `zhoufagao_mc` 周法高 | 19534 | 25513 | 5 |
+| `lifanggui_mc` 李方桂 | 19529 | 25507 | 0 |
+| `chenxinxiong_mc` 陈新雄 | 19477 | 25409 | 0 |
+| `karlgren_mc` 高本汉 | 6471 | 7673 | 0 |
+
+- 接口：`lookup_reading(ch, system_id)`、`lookup_scholar_reading(ch, system_id)`、
+  `scholar_coverage(system_id)`
+- 报告：`python scripts/coverage_report.py --all`
 - 契约（不要破坏）：
   - **上游没有声调字段**，`tone` 恒为 `None`，不得补全
   - 聲母 `0` 表示零声母，不是数字
-  - 13 行源表错位（聲母列填了韵母值，如「弩」=`u`）→ 标记
-    `source_record_defect` 且**不给 IPA**；多音字优先取非错位记录
+  - 错位行判据是「**以元音开头**」，不能改成「含元音」——
+    李方桂用 `ji-` 表示喻母，用「含元音」会误判 974 行
+  - 错位行标 `source_record_defect` 且**不给 IPA**；多音字优先取非错位记录
   - 跳过数必须计数并暴露，不得静默吞掉
+- 性能：整个数据包按 system 分组后只解析一次（`_bundle_rows`），
+  六个体系全套测试从 36 秒降到 4.5 秒
 
 **待做**：
 
-1. 接入第二个体系。同一数据包里还有：董同龢、周法高、李方桂、陳新雄、高本漢（中古）。
-   做法：`language/history/sinica_scholar_data.py` 的 `SCHOLAR_SYSTEMS` 加一行
-   （模块里已记 `AVAILABLE_BUT_UNREGISTERED`），同时在 `systems.py` 登记，
-   并给 `reconstruction.py` 的 scholar 分支补测试。
-2. 覆盖率与「可合成」之间的缺口仍在。
+1. Sinica 的上古方案（先秦各学者，56169 条）尚未接入 —— 注意上古表结构不同：
+   有「韻部」字段、没有「韻母」，不能直接复用中古的加载逻辑。
+2. 「同一个字六家拟音对照」的视图还没做（`融` 是现成例子）。
 
 ### 第三阶段（下一步，未开始）
 

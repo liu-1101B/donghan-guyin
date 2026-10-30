@@ -42,22 +42,36 @@
 
 东汉旧字表继续以 han_eastern_experimental 暴露，但结果标记为 legacy_experimental，来源置信度为 unassessed。下一步需逐条核验来源、著作版本、推导链和争议。
 
-## 第二套已接入数据：王力中古拟音（Sinica 汉字构形资料库）
+## 第二套已接入数据：六家中古学者拟音（Sinica 汉字构形资料库）
 
-`language/history/sinica_scholar_data.py` 接入「014 隋唐_擬音_王力系統.xlsx」
+`language/history/sinica_scholar_data.py` 接入「隋唐_擬音_*.xlsx」六份
 （已随仓库打包于 `data/historical/sinica_ccr_import/`，许可 PDM）。
 
-- 25521 条匹配 → 25508 条加载 → 19523 个去重字、4772 个多音字
-- 接口：`lookup_reading(ch, "wangli_mc")`、`lookup_scholar_reading(ch, "wangli_mc")`、
-  `scholar_coverage("wangli_mc")`
-- **上游无聲調字段**：`tone` 恒为 `None`，本项目不推测、不补全
-- 聲母 `0` 表示零声母，拼 IPA 时按无辅音处理
-- 13 行源表错位（聲母列填了韵母值，如「弩」= `u`、「反」有一行 = `ǐɐn`）：
-  标记 `source_record_defect` 且不生成 IPA；多音字优先取非错位记录
-- 覆盖率报告：`python scripts/coverage_report.py`
+| 体系 id | 学者 | 去重字数 | 记录 | 错位行 |
+|---|---|---|---|---|
+| `wangli_mc` | 王力 | 19523 | 25508 | 13 |
+| `dongtonghe_mc` | 董同龢 | 19534 | 25515 | 0 |
+| `zhoufagao_mc` | 周法高 | 19534 | 25513 | 5 |
+| `lifanggui_mc` | 李方桂 | 19529 | 25507 | 0 |
+| `chenxinxiong_mc` | 陈新雄 | 19477 | 25409 | 0 |
+| `karlgren_mc` | 高本汉 | 6471 | 7673 | 0 |
 
-同一数据包里还有董同龢、周法高、李方桂、陳新雄、高本漢的中古方案，
-接入时在 `SCHOLAR_SYSTEMS` 加一行即可（已在模块里记为 `AVAILABLE_BUT_UNREGISTERED`）。
+同一个「融」六家给出 `jǐuŋ / juŋ / iuŋ / jiung / ǐoŋ / i̯uŋ`，
+可直接用作「各体系不可混用」的示例。
+
+接口：`lookup_reading(ch, system_id)`、`lookup_scholar_reading(ch, system_id)`、
+`scholar_coverage(system_id)`；报告：`python scripts/coverage_report.py --all`。
+
+### 接入时遇到的三个坑
+
+1. **上游无聲調字段**：`tone` 恒为 `None`，本项目不推测、不补全。
+2. **聲母 `0` 表示零声母**，不是数字；拼 IPA 时按无辅音处理。
+3. **错位行的判据必须是「以元音开头」，不能是「含元音」**：
+   李方桂方案用 `ji-` 表示喻母（如「融」= `ji` + `ung`），含元音却是合法声母，
+   用「含元音」会误判该体系 974 行；而王力 13 行、周法高 5 行确实把韵母值
+   填进了聲母列（`u` / `ɑ` / `əu` / `o` / `ǐɐn`），以元音开头，能被准确抓到。
+
+错位行标记 `source_record_defect` 且不生成 IPA；多音字优先取非错位记录。
 
 **注意**：这一步只解决「查得到」，没有解决「播得出」。`ancient_tts.text_to_ipa()`
 仍只查 703 字旧表，发音链路与数据层尚未打通。

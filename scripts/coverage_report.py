@@ -16,6 +16,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+from language.history import lookup_reading  # noqa: E402
 from language.history.sinica_scholar_data import (  # noqa: E402
     SCHOLAR_SYSTEMS, lookup_scholar_reading, scholar_coverage,
 )
@@ -30,13 +31,36 @@ def _legacy_chars():
         return []
 
 
+def print_summary_table():
+    """六个体系横向对比。"""
+    print("# 中古学者方案横向对比")
+    print()
+    print("| 体系 | 字数 | 记录 | 错位行 | 非单字 | 東 | 融 |")
+    print("|---|---|---|---|---|---|---|")
+    for sid in SCHOLAR_SYSTEMS:
+        cov = scholar_coverage(sid)
+        east = lookup_reading("東", sid).ipa or "—"
+        rong = lookup_reading("融", sid).ipa or "—"
+        print("| `%s` | %d | %d | %d | %d | `%s` | `%s` |"
+              % (sid, cov["characters"], cov["records"],
+                 cov["skipped_suspect_initial"], cov["skipped_not_single_char"],
+                 east, rong))
+    print()
+    print("同一个「融」在六家方案下的差异，就是各体系不可混用的直接证据。")
+    print()
+
+
 def main():
     ap = argparse.ArgumentParser(description="拟音体系覆盖率报告")
     ap.add_argument("--system", default="wangli_mc",
                     choices=sorted(SCHOLAR_SYSTEMS), help="要报告的系统 id")
+    ap.add_argument("--all", action="store_true", help="输出六个体系的横向对比")
     ap.add_argument("--against", default="legacy",
                     choices=("legacy", "none"), help="对照字表")
     args = ap.parse_args()
+
+    if args.all:
+        print_summary_table()
 
     cov = scholar_coverage(args.system)
 
