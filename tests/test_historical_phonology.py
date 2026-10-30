@@ -567,6 +567,25 @@ class TtsSystemRoutingTests(unittest.TestCase):
         self.assertEqual(r.unknown, ["龘"])
         self.assertIn("tu" + "ŋ", r.ipa_text)
 
+    def test_result_tracks_characters_for_ui(self):
+        # Phase 3 (3): 逐字 (字, IPA, 状态) 供 UI「重建状态 × 合成能力」双列
+        r = text_to_ipa("東", system_id="wangli_mc")
+        self.assertEqual(r.characters, [("東", "tu" + "ŋ", "covered")])
+        self.assertEqual(r.system_id, "wangli_mc")
+
+    def test_scholar_unknown_character_tracked(self):
+        # 融 absent from karlgren_oc (frozen) → (字, None, "unknown")，不进 IPA 串
+        r = text_to_ipa("東融", system_id="karlgren_oc")
+        self.assertEqual(r.characters[1], ("融", None, "unknown"))
+        self.assertEqual(r.unknown, ["融"])
+
+    def test_legacy_pinyin_approx_tracked(self):
+        # 旧路径的拼音近似字也要进逐字明细（状态 "approx"）
+        r = text_to_ipa("龍")  # 旧表 simplified-keyed，繁体字走拼音近似
+        self.assertEqual(r.characters[0][2], "approx")
+        self.assertEqual(r.approx, 1)
+        self.assertIsNone(r.system_id)
+
 
 class PhonemeCapabilityTests(unittest.TestCase):
     """Phase 3 (2): IPA → 合成器能力矩阵（eSpeak 主路径 + 共振峰回退）。"""

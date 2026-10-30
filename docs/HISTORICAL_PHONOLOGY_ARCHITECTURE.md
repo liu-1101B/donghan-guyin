@@ -73,8 +73,7 @@
 
 错位行标记 `source_record_defect` 且不生成 IPA；多音字优先取非错位记录。
 
-**注意**：这一步只解决「查得到」，没有解决「播得出」。`ancient_tts.text_to_ipa()`
-仍只查 703 字旧表，发音链路与数据层尚未打通。
+（「查得到 → 播得出」的打通见下文「第三阶段：发音引擎」。）
 
 ## 第三套已接入数据：五家上古（先秦）学者拟音（Sinica 汉字构形资料库）
 
@@ -125,16 +124,74 @@ UI（`guyun_app.py`）「🔀 同字跨体系对照（争议项）」展开器�
 测试：`CompareCharacterTests`（6 项）锁定上述契约，含高本漢先秦表「融」缺席、中古六家
 六值不可折叠、东汉实验字表行存在、未知字全体系报缺。
 
+## 第三阶段：发音引擎（text_to_ipa 路由 → 能力矩阵 → 双列 UI）
+
+分三步完成，每步独立提交：
+
+### ① `text_to_ipa(system_id=...)` 路由（`language/ancient_tts.py`）
+
+- `text_to_ipa(classical, system_id=None)` 与 `synthesize_ancient(..., system_id=...)`
+  接受体系 id；`_resolve_synthesis_system` 把选择解析为 `"legacy"`（东汉实验字表旧路径，
+  行为与旧版逐字一致，`AncientResult.system_id` 保持 `None`）或学者体系 id。
+- `han_eastern_experimental` 显式解析回 legacy 路径（与 703 字旧表等价）。
+- 学者路径**永不回退现代拼音**：体系内缺字/源表缺陷行一律计 `unknown`（不伪造该体系读音）；
+  非逐字 IPA 体系（反切地位 / PHONO-ML / 中原音韵转写 / 未接入）抛 `ValueError` 并说明原因，
+  不静默换体系。
+- `AncientResult.characters` 新增逐字明细：`(字, IPA 或 None, "covered"/"approx"/"unknown")`，
+  五个分支（legacy 收录 / legacy 拼音近似 / legacy 失败 / 学者收录 / 学者缺字）全部填充，
+  是 UI 双列展示的数据侧来源。
+
+### ② IPA→合成器能力矩阵（`language/phoneme_capability.py`）
+
+- `assess_ipa(ipa) -> IpAssessment`：把 IPA 串切成音段 token，逐 token 给出
+  eSpeak 级（`full` 能读 / `approx` 能读但重音音色丢失 / `partial` 部分能读 /
+  `untested` 未实测 / `silent` 实测被静默丢弃）与共振峰级（备用引擎口径）；
+  汇总出 `espeak_level`、`dropped_tokens`（被丢弃音段）、`approx_tokens`。
+- eSpeak 逐字丢弃是**实测行为**（`-v zh` 对未知字符按字符丢弃，不是整串失败），
+  所以「partial」语义 = 该音节在音频里缺段，界面上逐字标出丢了哪些音段。
+- 「能读出来」≠「音值正确」：`approx` 级符号（如 `â ă ï û ü í ǐ ǎ ĕ` 等重音变体）
+  有声音但语言学特征丢失，必须显式标近似，不当成 full。
+- `SILENT_FROZEN` / `APPROX_FROZEN` 是冻结集合，变更须附实测证据；
+  `karlgren_mc` / `dongtonghe_mc` 的 `anomalous_chars` 是**数据质量标记**
+  （上游含 ASCII 杂符），不是引擎能力问题。
+- `preprocess_ipa` 重构：eSpeak 发送前的归一化以本模块的符号表为唯一事实来源，
+  `sound_synth` 单向依赖本模块（`phoneme_capability` 不 import `sound_synth`）。
+- `system_capability_report(system_id)`：整体系扫描（字数 / 各档位 / dropped 音段频次），
+  报告数字被测试冻结（如 lifanggui_oc 11160 行全 full、9001 字干净；
+  wangli_mc dropped ȶ 720 / ȡ 486 / ɽ 406 等）。
+
+### ③ 重建可信度 × 合成能力双列 UI（`guyun_app.py`）
+
+- 「拟音体系」selectbox 提供 12 个选项：默认（None = 东汉实验字表）+ 11 家学者体系。
+- 选学者体系走 `process_input_scholar` → 7 元组
+  `(classical, valid_ipa, audio_dh, mod, audio_mec, rows, scholar_info)`；
+  选默认走旧 `process_input`（`scholar_info` 为 None），旧展示逻辑不受影响。
+- `scholar_info` 契约：`{system_id, system_name, rows, level_counts, coverage, unknown}`；
+  `rows` 每行 `{char, ipa, status, cap}`——**status 是数据侧**（收录 / 拼音近似 /
+  缺字（不补拼音）），**cap 是引擎侧**（能读 / 近似 / 部分能读（丢 X）/ 未实测 / 静默），
+  两列永不合并成一个分数。
+- 界面：逐字对照表（15 行/页，`scholar_prev`/`scholar_next` 翻页）+
+  「合成能力汇总」行（`level_counts` 按档计数）+ 覆盖率 caption
+  （收录 N 字 / 缺字 M 个，注明不补拼音）。
+- 音频卡片与下载文件名随体系动态化（`guyun_<system_id>_v<ver>.wav`）。
+
 ## 下一步实施顺序
 
 1. 盘点 phonology_db.py，为条目补来源/版本/推导规则，同时保留旧字段兼容。
-2. 已完成第一套 CC0《广韵》音韵地位资料、六家中古学者拟音与五家上古（先秦）学者拟音接入，`scripts/coverage_report.py --all` 出 11 体系覆盖率报告；同字跨体系对照视图与 UI 覆盖表已接入（`compare_character`）。
+2. 已完成：第一套 CC0《广韵》音韵地位资料、六家中古学者拟音与五家上古（先秦）学者拟音接入，
+   `scripts/coverage_report.py --all` 出 11 体系覆盖率报告；同字跨体系对照视图与 UI 覆盖表已接入（`compare_character`）。
 3. 为多音字增加词级上下文选择，不以单字查表代替词汇读音。
-4. 为音素到 TTS 的映射建立能力矩阵；拟音可信度与合成器能力分别报告。
-5. 时间轴与体系选择已接入 Streamlit UI（探索器 + 同字跨体系对照 + 覆盖表）；后续「拟音表 → 发音」的接入仍须先于 UI，UI 不先于数据契约。
+4. 已完成：音素→TTS 能力矩阵（`phoneme_capability`），拟音可信度与合成器能力双列分报（③）。
+5. 已完成：「拟音表 → 发音」先于 UI 接入（① 路由 + ② 矩阵），UI 只消费数据契约，不先于契约。
 
 ## 测试
 
-在仓库根目录运行：
+在**工作树**（`donghan-guyin/.wt-feat-phon/`）内运行 `run_feat_tests.py`
+（它把沙箱拒绝的 `0o700` mkdir 重映射为 `0o707`；原生 `python -m unittest`
+会有 5 项假失败，仓库根的 `run_tests_sandbox.py` 也不要在该工作树 CWD 下运行）：
 
-    python -m unittest discover -s tests -p "test_historical_phonology.py"
+    $py run_feat_tests.py        # 86 项，全部通过
+
+UI 冒烟（无头 Streamlit AppTest，确认脚本树无异常、拟音体系 selectbox 存在）：
+
+    $py scripts/smoke_app.py     # 见交接说明的环境变量约定

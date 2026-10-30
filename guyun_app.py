@@ -123,11 +123,72 @@ def query_qieyun(char):
     except: pass
     return None
 
-def process_input(inp, skip_translate=False, pitch=130):
+def process_input_scholar(classical, system_id, pitch=130):
+    """v5 第三阶段③：用所选学者体系逐字拟音并合成。
+
+    与旧路径的区别：
+    - 缺字计 unknown，**不补现代拼音**（不伪造该体系读音）；
+    - 每个字给出「重建状态（数据侧）」与「合成能力（引擎侧）」两列，
+      缺的音段逐字显式报出，不静默缩短音节。
+    """
+    from language.ancient_tts import text_to_ipa
+    from language.phoneme_capability import assess_ipa, ESPEAK_LEVEL_ZH
+    from language.history import get_system
+    result = text_to_ipa(classical, system_id=system_id)
+    valid_ipa = result.ipa_text
+    audio_dh, audio_mec = None, None
+    if valid_ipa.strip():
+        try:
+            audio = synthesize_text(valid_ipa, pitch=pitch)
+            if audio is not None and len(audio) > 0 and np.max(np.abs(audio)) > 0.001:
+                audio_dh = audio_to_base64(audio)
+        except: pass
+        try:
+            audio_m = synthesize_text(valid_ipa, pitch=max(100, pitch - 30))
+            if audio_m is not None and len(audio_m) > 0 and np.max(np.abs(audio_m)) > 0.001:
+                audio_mec = audio_to_base64(audio_m)
+        except: pass
+    mod = generate_edge_tts(classical)
+    if not mod:
+        try:
+            from gtts import gTTS
+            tts = gTTS(classical, lang="zh-CN", slow=False)
+            buf = BytesIO(); tts.write_to_fp(buf); buf.seek(0)
+            mod = base64.b64encode(buf.read()).decode("ascii")
+        except: pass
+    level_counts = {"full": 0, "approx": 0, "partial": 0, "untested": 0, "silent": 0}
+    rows = []
+    for ch, ipa, tag in result.characters:
+        if tag == "unknown":
+            rows.append({"char": ch, "ipa": None,
+                         "status": "缺字（不补拼音）", "cap": "—"})
+            continue
+        a = assess_ipa(ipa)
+        level_counts[a.espeak_level] = level_counts.get(a.espeak_level, 0) + 1
+        cap = ESPEAK_LEVEL_ZH.get(a.espeak_level, a.espeak_level)
+        if a.dropped_tokens:
+            cap += "（丢 " + " ".join(sorted(set(a.dropped_tokens))) + "）"
+        rows.append({"char": ch, "ipa": ipa,
+                     "status": "收录" if tag == "covered" else "拼音近似",
+                     "cap": cap})
+    scholar_info = {
+        "system_id": system_id,
+        "system_name": get_system(system_id).name,
+        "rows": rows,
+        "level_counts": level_counts,
+        "coverage": result.coverage,
+        "unknown": result.unknown,
+    }
+    return classical, valid_ipa, audio_dh, mod, audio_mec, rows, scholar_info
+
+
+def process_input(inp, skip_translate=False, pitch=130, system_id=None):
     if skip_translate:
         classical = inp
     else:
         classical = simple_translate(inp)
+    if system_id:
+        return process_input_scholar(classical, system_id=system_id, pitch=pitch)
     analyses, ipa_parts = [], []
     for ch in classical:
         if ch in '。！？':
@@ -176,7 +237,7 @@ def process_input(inp, skip_translate=False, pitch=130):
             mod = base64.b64encode(buf.read()).decode("ascii")
         except: pass
     audio_mod = mod
-    return classical, " ".join(ipa_parts), audio_dh, audio_mod, audio_mec, analyses
+    return classical, " ".join(ipa_parts), audio_dh, audio_mod, audio_mec, analyses, None
 
 # ===== UI =====
 st.set_page_config(page_title="古韵 - 东汉洛阳官音", page_icon=":classical_building:", layout="wide")
@@ -231,6 +292,16 @@ with col1:
     # 语调选择器：影响 pitch
     tone_pitch_map = {"平直": 120, "稳重": 130, "昂扬": 150, "悲慨": 100}
     tone_setting = st.select_slider("语调", options=list(tone_pitch_map.keys()), value="稳重")
+
+    # v5 第三阶段③：发音引擎按所选体系切换，缺音段显式报出
+    from language.history import SCHOLAR_SYSTEMS_ALL as _SCH_ALL
+    _SYNTH_OPTIONS = {"东汉洛阳官音（默认）": None}
+    _SYNTH_OPTIONS.update({f"{name}（{sid}）": sid for sid, name in _SCH_ALL.items()})
+    system_choice = st.selectbox("拟音体系", list(_SYNTH_OPTIONS.keys()), key="guyun_system")
+    if _SYNTH_OPTIONS[system_choice]:
+        st.caption("所选为学者拟音体系：逐字查该体系 Sinica 拟音表，缺字不补现代拼音；"
+                   "每个字的「重建状态」与「合成能力」分别显示，引擎发不出的音段逐字标注。")
+
     generate_btn = st.button("\U0001f399️ 生成", use_container_width=True, type="primary")
     with st.expander("\U0001f4d6 关于本项目"):
         st.markdown("基于郑张尚芳上古韵体系，以东汉洛阳音为目标音系。数据库当前收录 "+str(len(EASTERN_HAN_DB))+" 字。")
@@ -243,32 +314,41 @@ with col1:
 
 with col2:
     if generate_btn and input_text.strip():
+        selected_system_id = _SYNTH_OPTIONS[system_choice]
         with st.spinner("处理中…"):
             skip_translate = (input_mode == "直接输入古文")
             selected_pitch = tone_pitch_map.get(tone_setting, 130)
-            result = process_input(input_text.strip(), skip_translate=skip_translate, pitch=selected_pitch)
-            st.session_state.display_data = result
-            st.session_state.audio_version = st.session_state.get("audio_version", 0) + 1
-            st.session_state.tone_setting = tone_setting
+            try:
+                result = process_input(input_text.strip(), skip_translate=skip_translate,
+                                       pitch=selected_pitch, system_id=selected_system_id)
+            except ValueError as e:
+                st.warning(str(e))
+                result = None
+            if result is not None:
+                st.session_state.display_data = result
+                st.session_state.audio_version = st.session_state.get("audio_version", 0) + 1
+                st.session_state.tone_setting = tone_setting
         st.rerun()
 
     if "display_data" in st.session_state:
         d = st.session_state.display_data
-        classical, ipa_text, audio_dh, audio_mod, audio_mec, analyses = d
+        classical, ipa_text, audio_dh, audio_mod, audio_mec, analyses, scholar_info = d
         ver = st.session_state.get("audio_version", 0)
+        _sys_label = scholar_info["system_name"] if scholar_info else "东汉洛阳音"
 
         # 语调信息显示
         tone_val = st.session_state.get("tone_setting", "稳重")
         st.markdown("#### \U0001f4dc 古文翻译")
         st.markdown(f'<div class="classical-text">{classical}</div>', unsafe_allow_html=True)
 
-        st.markdown("#### \U0001f50a 东汉洛阳音 IPA")
+        st.markdown(f"#### \U0001f50a {_sys_label} IPA")
         st.markdown(f'<div class="ipa-display">{ipa_text}</div>', unsafe_allow_html=True)
 
         st.markdown("#### \U0001f50a 三轨音频")
         c1, c2, c3 = st.columns(3)
         with c1:
-            st.markdown('<div class="audio-card"><strong>\U0001f3db️ 东汉官音</strong></div>', unsafe_allow_html=True)
+            _track_label = "东汉官音" if not scholar_info else f"{scholar_info['system_name']} 官音"
+            st.markdown(f'<div class="audio-card"><strong>\U0001f3db️ {_track_label}</strong></div>', unsafe_allow_html=True)
             if audio_dh:
                 st.audio(base64.b64decode(audio_dh), format="audio/wav")
         with c2:
@@ -281,9 +361,60 @@ with col2:
                 st.audio(base64.b64decode(audio_mec), format="audio/wav")
 
         if audio_dh:
-            st.download_button("\U0001f4be 下载东汉官音 WAV", base64.b64decode(audio_dh), file_name=f"donghan_guyun_v{ver}.wav", mime="audio/wav")
+            _dl_name = f"guyun_v{ver}.wav" if not scholar_info else f"guyun_{scholar_info['system_id']}_v{ver}.wav"
+            _dl_label = "下载东汉官音 WAV" if not scholar_info else f"下载 {scholar_info['system_name']} 官音 WAV"
+            st.download_button(f"\U0001f4be {_dl_label}", base64.b64decode(audio_dh), file_name=_dl_name, mime="audio/wav")
 
-        valid = [a for a in analyses if a is not None]
+        if scholar_info:
+            from language.phoneme_capability import ESPEAK_LEVEL_ZH
+            rows_all = scholar_info["rows"]
+            st.markdown("---")
+            st.markdown(f"#### \U0001f4ca 逐字对照（{scholar_info['system_name']}）")
+
+            rows_per_page = 15
+            total_pages = max(1, (len(rows_all) + rows_per_page - 1) // rows_per_page)
+            if "phonology_page" not in st.session_state:
+                st.session_state.phonology_page = 0
+            st.session_state.phonology_page = min(st.session_state.phonology_page, total_pages - 1)
+
+            c_prev, c_page, c_next = st.columns([1, 3, 1])
+            with c_prev:
+                if st.button("◀ 上一页", disabled=(st.session_state.phonology_page == 0), use_container_width=True, key="scholar_prev"):
+                    st.session_state.phonology_page = max(0, st.session_state.phonology_page - 1)
+                    st.rerun()
+            with c_page:
+                st.markdown(f'<div style="text-align:center;color:var(--gold)!important;padding-top:0.3rem">第 {st.session_state.phonology_page + 1} / {total_pages} 页（共 {len(rows_all)} 字）</div>', unsafe_allow_html=True)
+            with c_next:
+                if st.button("下一页 ▶", disabled=(st.session_state.phonology_page >= total_pages - 1), use_container_width=True, key="scholar_next"):
+                    st.session_state.phonology_page = min(total_pages - 1, st.session_state.phonology_page + 1)
+                    st.rerun()
+
+            start = st.session_state.phonology_page * rows_per_page
+            trs = []
+            for r in rows_all[start:start + rows_per_page]:
+                ipa_disp = r["ipa"] or "—"
+                miss = r["status"].startswith("缺")
+                color = "#d85a4a" if miss else "#7a6a5a"
+                trs.append(
+                    f'<tr><td style="padding:0.3rem;text-align:center;font-weight:700">{r["char"]}</td>'
+                    f'<td style="padding:0.3rem;text-align:center;font-family:monospace">{ipa_disp}</td>'
+                    f'<td style="padding:0.3rem;text-align:center;color:{color}">{r["status"]}</td>'
+                    f'<td style="padding:0.3rem;text-align:center;font-size:0.75rem">{r["cap"]}</td></tr>')
+            st.markdown(
+                '<table class="phonology-table"><thead><tr><th>字</th><th>体系拟音</th>'
+                f'<th>重建状态（数据侧）</th><th>合成能力（引擎侧）</th></tr></thead><tbody>{"".join(trs)}</tbody></table>',
+                unsafe_allow_html=True)
+
+            lc = scholar_info["level_counts"]
+            lc_summary = " · ".join(f"{ESPEAK_LEVEL_ZH[k]}：{v} 字" for k, v in lc.items() if v)
+            st.caption(f"合成能力汇总：{lc_summary or '—'}")
+            st.caption(
+                "两列相互独立：**重建状态** = 该学者体系在 Sinica 工作簿里是否有此字的拟音记录"
+                f"（缺字 {len(scholar_info['unknown'])} 个，不用现代拼音补）；"
+                "**合成能力** = 本机 eSpeak-ng 能否发出拟音中的音段——引擎丢掉的音段逐字标注，"
+                "且「能渲染」不等于音值准确（近似符号按原音素近似发音）。")
+
+        valid = [a for a in analyses if a is not None] if not scholar_info else []
         if valid:
             st.markdown("---")
             st.markdown("#### \U0001f4ca 逐字音韵分析")

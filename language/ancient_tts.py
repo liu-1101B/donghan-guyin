@@ -75,6 +75,9 @@ class AncientResult:
     approx: int            # 拼音近似字数（仅无体系回退路径使用）
     unknown: list = field(default_factory=list)
     system_id: Optional[str] = None   # 实际使用的体系；None = 东汉实验字表旧路径
+    # 逐字明细 (字, IPA 或 None, "covered"/"approx"/"unknown")，供 UI 做
+    # 「重建状态（数据侧）× 合成能力（引擎侧）」双列展示
+    characters: list = field(default_factory=list)
 
     @property
     def total(self):
@@ -118,7 +121,7 @@ def text_to_ipa(classical: str, system_id: Optional[str] = None) -> AncientResul
     """
     mode = _resolve_synthesis_system(system_id)
     from language.history import lookup_reading
-    ipa_parts, unknown = [], []
+    ipa_parts, unknown, chars = [], [], []
     coverage = approx = 0
     for ch in classical:
         if ch in '。！？':
@@ -132,23 +135,28 @@ def text_to_ipa(classical: str, system_id: Optional[str] = None) -> AncientResul
                 data = lookup_char(ch)
                 if data:
                     coverage += 1
+                    chars.append((ch, data['ipa'], 'covered'))
                 else:
                     py = get_pinyin_fallback(ch)
                     est = estimate_ipa_from_pinyin(py) if py else None
                     if est:
                         approx += 1
+                        chars.append((ch, est, 'approx'))
                         data = {'ipa': est}
                     else:
                         unknown.append(ch)
+                        chars.append((ch, None, 'unknown'))
                         continue
                 ipa_parts.append(data['ipa'])
             else:
                 reading = lookup_reading(ch, mode)
                 if reading.available:
                     coverage += 1
+                    chars.append((ch, reading.ipa, 'covered'))
                     ipa_parts.append(reading.ipa)
                 else:
                     unknown.append(ch)
+                    chars.append((ch, None, 'unknown'))
         # 引号括号等直接跳过
     # 过滤含中文字符的非法片段
     clean = [p for p in ipa_parts
@@ -159,6 +167,7 @@ def text_to_ipa(classical: str, system_id: Optional[str] = None) -> AncientResul
         approx=approx,
         unknown=unknown,
         system_id=None if mode == "legacy" else mode,
+        characters=chars,
     )
 
 
