@@ -4,6 +4,8 @@ import struct, math, wave, io, base64, subprocess, tempfile, os
 import sys
 import numpy as np
 
+from language.phoneme_capability import ESPEAK_IPA_MAP
+
 SAMPLE_RATE = 22050
 
 def get_espeak_path():
@@ -49,32 +51,16 @@ def get_espeak_env():
 # ============================================================
 
 def preprocess_ipa(ipa_str):
-    """将 IPA 转换为 eSpeak-ng 的 [[ipa]] 语法可识别的 ASCII 字符"""
+    """将 IPA 转换为 eSpeak-ng 的 [[ipa]] 语法可识别的 ASCII 字符。
+
+    映射表单一数据源：:data:`language.phoneme_capability.ESPEAK_IPA_MAP`
+    （能力矩阵与 UI 也用它）。按字典序迭代 = 原逐个 replace 的应用顺序，
+    各键互不为别名子串，行为与旧实现逐字节一致。
+    """
     if not ipa_str:
         return ""
-    ipa_str = ipa_str.replace('ʰ', 'h')
-    ipa_str = ipa_str.replace('ʷ', 'w')
-    ipa_str = ipa_str.replace('ʲ', 'j')
-    ipa_str = ipa_str.replace('ɨ', '1')
-    ipa_str = ipa_str.replace('ə', '@')
-    ipa_str = ipa_str.replace('ɛ', 'E')
-    ipa_str = ipa_str.replace('ɔ', 'O')
-    ipa_str = ipa_str.replace('ɑ', 'A')
-    ipa_str = ipa_str.replace('ɐ', 'V')
-    ipa_str = ipa_str.replace('ɒ', 'Q')
-    ipa_str = ipa_str.replace('æ', '{')
-    ipa_str = ipa_str.replace('ŋ', 'N')
-    ipa_str = ipa_str.replace('ȵ', 'J')
-    ipa_str = ipa_str.replace('ʑ', 'Z')
-    ipa_str = ipa_str.replace('ɕ', 'S')
-    ipa_str = ipa_str.replace('ʂ', 's`')
-    ipa_str = ipa_str.replace('ʐ', 'z`')
-    ipa_str = ipa_str.replace('ʔ', '?')
-    ipa_str = ipa_str.replace('ɦ', 'h')
-    ipa_str = ipa_str.replace('ʌ', 'V')
-    ipa_str = ipa_str.replace('ɤ', '7')
-    ipa_str = ipa_str.replace('ɯ', 'u')
-    ipa_str = ipa_str.replace('ʉ', 'u')
+    for src, dst in ESPEAK_IPA_MAP.items():
+        ipa_str = ipa_str.replace(src, dst)
     return ipa_str
 
 

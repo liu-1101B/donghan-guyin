@@ -17,6 +17,11 @@ from language.history import (TIMELINE, get_period, get_system, lookup_reading,
                                compare_character)
 from phonology_db import EASTERN_HAN_DB
 from language.ancient_tts import text_to_ipa
+from language.phoneme_capability import (
+    ESPEAK_IPA_MAP, classify_symbol, assess_ipa, system_capability_report,
+    _formant_status, OK, APPROX, SILENT, COMBINING, JUNK,
+)
+from sound_synth import preprocess_ipa
 
 
 
@@ -561,6 +566,140 @@ class TtsSystemRoutingTests(unittest.TestCase):
         self.assertEqual(r.coverage, 1)
         self.assertEqual(r.unknown, ["龘"])
         self.assertIn("tu" + "ŋ", r.ipa_text)
+
+
+class PhonemeCapabilityTests(unittest.TestCase):
+    """Phase 3 (2): IPA → 合成器能力矩阵（eSpeak 主路径 + 共振峰回退）。"""
+
+    # -- 静态分类 ----------------------------------------------------------
+
+    def test_espeak_map_is_single_source_of_truth_for_preprocess(self):
+        # 23 个映射、顺序敏感：整串过 preprocess_ipa 应得确定结果
+        src = "\u02b0\u02b7\u02b2\u0268\u0259\u025b\u0254\u0251\u0250\u0252\u00e6\u014b\u0235\u0291\u0255\u0282\u0290\u0294\u0266\u028c\u0264\u026f\u0289"
+        self.assertEqual(preprocess_ipa(src), "hwj1@EOAVQ{NJZSs`z`?hV7uu")
+        # 映射表每个键都确实被替换
+        for ch, alias in ESPEAK_IPA_MAP.items():
+            self.assertNotIn(ch, preprocess_ipa(ch), ch)
+            self.assertIn(alias, preprocess_ipa(ch), ch)
+
+    def test_frozen_silent_symbols(self):
+        # 实测（eSpeak-ng 1.52 -v zh）：这些符号整段被静默丢弃
+        for ch in "\u00e4\u00e5\u00e7\u015b\u017a\u0221\u0236\u0256\u025f\u0261\u0263\u026a\u0271\u0272\u0273\u027d\u0283\u0285\u0288\u028e\u0292\u1e0d\u1e47\u1e63\u1e6d\u1e93\u1ead":
+            self.assertEqual(classify_symbol(ch), SILENT, repr(ch))
+
+    def test_mapped_and_ascii_symbols_are_ok(self):
+        for ch in "\u014b\u0255\u02b0tskhng":
+            self.assertEqual(classify_symbol(ch), OK, repr(ch))
+        self.assertEqual(classify_symbol("&"), JUNK)
+
+    def test_precomposed_accented_vowels_are_approx(self):
+        for ch in "\u00e2\u0103\u00ef\u00fb\u00fc\u0115":
+            self.assertEqual(classify_symbol(ch), APPROX, repr(ch))
+
+    def test_combining_marks_depend_on_base_letter(self):
+        self.assertEqual(classify_symbol("\u030c"), COMBINING)
+        a = assess_ipa("ti\u030c")  # i + caron（分解型，王力/李方桂带调元音）
+        self.assertEqual(a.espeak_level, "approx")
+        self.assertEqual(a.dropped_tokens, ())
+
+    # -- assess_ipa ------------------------------------------------------------
+
+    def test_assess_full(self):
+        a = assess_ipa("jung")
+        self.assertEqual(a.espeak_level, "full")
+        self.assertEqual(a.formant_level, "full")
+        self.assertTrue(a.fully_synth)
+
+    def test_assess_partial_drops_segment(self):
+        # eSpeak 逐字符丢弃：t/a 保留，ɣ 缺段（实测 [[tɣa]] 与 [[ta]] 同采样数）
+        a = assess_ipa("t\u0263a")
+        self.assertEqual(a.espeak_level, "partial")
+        self.assertEqual(a.dropped_tokens, ("\u0263",))
+        self.assertTrue(a.any_segment_dropped)
+
+    def test_assess_approx_keeps_all_segments(self):
+        a = assess_ipa("m\u0325a")  # m̥ a：点符丢失，段完整
+        self.assertEqual(a.espeak_level, "approx")
+        self.assertEqual(a.dropped_tokens, ())
+
+    def test_assess_empty_raises(self):
+        with self.assertRaises(ValueError):
+            assess_ipa("")
+
+    def test_formant_status_uses_real_engine_sets(self):
+        # 共振峰表能真发的（直接读 sound_synth 的表，防漂移）
+        for ch in "\u0283\u0292\u0255\u0291xh\u0263":
+            self.assertEqual(_formant_status(ch), OK, repr(ch))
+        # ASCII g 能发，小写 G 变体 ɡ 不能
+        self.assertEqual(_formant_status("g"), OK)
+        self.assertEqual(_formant_status("\u0261"), SILENT)
+        self.assertEqual(_formant_status("\u0236"), SILENT)
+        self.assertEqual(_formant_status("i"), OK)
+        self.assertEqual(_formant_status("\u026a"), SILENT)  # ɪ
+
+    # -- 体系级报告（冻结 .probe_reports.json 的数字）-------------------------
+
+    def test_lifanggui_oc_is_fully_synth(self):
+        # 李方桂先秦表 100% 可合成：全部读法无缺段、无近似
+        r = system_capability_report("lifanggui_oc")
+        self.assertEqual(r["readings"], 11160)
+        self.assertEqual(r["espeak_full"], 11160)
+        self.assertEqual(r["espeak_partial"], 0)
+        self.assertEqual(r["formant_full"], 11160)
+        self.assertEqual(r["characters_with_gaps"], 0)
+        self.assertEqual(r["characters_clean"], 9001)
+
+    def test_wangli_mc_frozen_aggregates(self):
+        r = system_capability_report("wangli_mc")
+        self.assertEqual((r["espeak_full"], r["espeak_approx"], r["espeak_partial"]),
+                         (11317, 9745, 4433))
+        self.assertEqual(r["no_ipa_records"], 13)
+        d = r["dropped_symbols"]
+        self.assertEqual(d["\u0263"], 1658)
+        self.assertEqual(d["\u0283"], 923)
+        self.assertEqual(d["\u0236"], 720)
+        self.assertEqual(d["\u0221"], 486)
+        self.assertEqual(d["\u027d"], 406)
+        self.assertEqual(d["\u0292"], 240)
+
+    def test_lifanggui_mc_dropped_symbols(self):
+        r = system_capability_report("lifanggui_mc")
+        self.assertEqual((r["espeak_full"], r["espeak_approx"], r["espeak_partial"]),
+                         (9933, 8492, 7082))
+        d = r["dropped_symbols"]
+        self.assertEqual(d["\u0263"], 1325)
+        self.assertEqual(d["\u015b"], 1159)
+        self.assertEqual(d["\u1ead"], 1152)
+
+    def test_karlgren_mc_reports_data_quality_junk(self):
+        # 高本漢中古 IPA 值含上游残留标点：如实暴露，不静默吞掉
+        r = system_capability_report("karlgren_mc")
+        self.assertEqual(r["no_ipa_records"], 1)
+        self.assertEqual(r["espeak_full"], 2889)
+        self.assertEqual(r["anomalous_chars"],
+                         {"=": 2, "_": 2, "&": 1, "#": 1, ";": 1,
+                          "*": 1, "\n": 1, '"': 1})
+
+    def test_dongtonghe_mc_reports_data_quality_junk(self):
+        r = system_capability_report("dongtonghe_mc")
+        self.assertEqual(r["anomalous_chars"],
+                         {"&": 280, ";": 280, "(": 47, ")": 47})
+
+    def test_zhoufagao_mc_has_no_approx_symbols(self):
+        # 周法高体系不用任何附加符：近似档应为空
+        r = system_capability_report("zhoufagao_mc")
+        self.assertEqual(r["espeak_approx"], 0)
+        self.assertEqual(r["approx_symbols"], {})
+        self.assertEqual(r["dropped_symbols"]["\u026a"], 2544)
+
+    def test_dongtonghe_oc_dominant_dropped_is_small_cap_g(self):
+        r = system_capability_report("dongtonghe_oc")
+        self.assertEqual(r["dropped_symbols"]["\u0261"], 3697)
+
+    def test_unknown_system_raises(self):
+        with self.assertRaises(KeyError):
+            system_capability_report("nonexistent_system")
+
 
 
 if __name__ == "__main__":
