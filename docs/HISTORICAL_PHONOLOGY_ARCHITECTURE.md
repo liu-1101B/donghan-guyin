@@ -42,6 +42,27 @@
 
 东汉旧字表继续以 han_eastern_experimental 暴露，但结果标记为 legacy_experimental，来源置信度为 unassessed。下一步需逐条核验来源、著作版本、推导链和争议。
 
+### 东汉 → 中古 音类对应表（第一阶段收尾）
+
+`language/history/eastern_mc_correspondence.py` 把东汉旧字表（703 字）锚定到上表的
+3707 个首字（OpenCC `s2t` 对齐），产出两张**观测对应表**（不是音变规律）：
+
+- 解析器 `parse_position_description`：`声母[开合][等|重纽AB]韵调` → 六字段，
+  开合/等/重纽各自至多一次、可为空（表内确有 `端開登入` 这类无等描述，1425 条）。
+  3872 条记录 0 漏网，并与 Qieyun 规范位置集逐字段对账（测试项，Qieyun 缺失时跳过）。
+- 声母对应：30 个东汉母 → 中古 38 声母（初母仅 1 字且无锚定，不在表内）；
+  韵母对应：东汉韵部 → 中古 58 韵，合计 526 条（字, 中古位置）对（部分锚定字有多条反切）。
+- 每对附字表作为文字依据；`n < 3` 的对标 `is_exception`（如 见母→見51/匣1、
+  透母→昌5/透4/徹1、阳韵→陽17/唐13/庚8）。
+- 覆盖缺口如实暴露：703 字中 **493 有锚点、210 无**（人/今/他 在表中只作反切字，
+  使 完全缺席），`unanchored_characters()` 可查，报告不回填。
+- **锚点空间粒度 38 声母 / 58 韵 / 4 调**：CC0 表与 Qieyun 规范位置集在此粒度上
+  完全一致，属上游数据粒度特性，不等于《广韵》传统 106 韵分法，任何文档与报告
+  不得声称“覆盖 58/106 韵”。
+- 报告：`scripts/correspondence_report.py`（默认完整中文报告；`--char 东` 单字锚点；
+  `--json` 概要）。来源（CC0 + blob SHA）与三条局限（无锚点字、legacy 实验端、
+  观测非规律）全部显式打印。
+
 ## 第二套已接入数据：六家中古学者拟音（Sinica 汉字构形资料库）
 
 `language/history/sinica_scholar_data.py` 接入「隋唐_擬音_*.xlsx」六份
@@ -190,7 +211,7 @@ UI（`guyun_app.py`）「🔀 同字跨体系对照（争议项）」展开器�
 （它把沙箱拒绝的 `0o700` mkdir 重映射为 `0o707`；原生 `python -m unittest`
 会有 5 项假失败，仓库根的 `run_tests_sandbox.py` 也不要在该工作树 CWD 下运行）：
 
-    $py run_feat_tests.py        # 86 项，全部通过
+    $py run_feat_tests.py        # 107 项，全部通过
 
 UI 冒烟（无头 Streamlit AppTest，确认脚本树无异常、拟音体系 selectbox 存在）：
 

@@ -49,7 +49,7 @@ $env:PYTHONUTF8 = "1"; $env:PYTHONIOENCODING = "utf-8"
    全部 Access Denied，但**目录重命名可以**——已改名为 `*_stale*` 移出导入路径）。
    它们是死重量，`import numpy/scipy` 永远解析到 `.libs_guyun2`，不要试图再删，
    也不要让 `.libs_guyun` 排在 `.libs_guyun2` 前面。
-4. **跑测试要用工作树根的 `run_feat_tests.py`**（86 项全绿）
+4. **跑测试要用工作树根的 `run_feat_tests.py`**（107 项全绿）
    原生 `python -m unittest` 会有 5 项假失败——沙箱拒绝写入 `tempfile.mkdtemp()`
    创建的 `0o700` 目录，该脚本把 `0o700` 重映射为 `0o707`。
    仓库根的 `run_tests_sandbox.py` **不要**在工作树 CWD 下运行。
@@ -101,10 +101,30 @@ $env:PYTHONUTF8 = "1"; $env:PYTHONIOENCODING = "utf-8"
    `AncientResult.characters` 逐字明细；合成能力汇总 + 覆盖率 caption；
    音频卡片/下载名随体系动态化。
 
-测试：`run_feat_tests.py` 86 项全绿（含 3 个新增的 characters 契约测试）；
+测试：`run_feat_tests.py` 107 项全绿；
 `scripts/smoke_app.py` AppTest 冒烟通过（6 个 selectbox，含「拟音体系」）。
 
-### 下一阶段建议（第四阶段）
+### 第一阶段收尾 ✅ 已完成（东汉→中古音类对应表，单提交）
+
+- 新模块 `language/history/eastern_mc_correspondence.py`：
+  - `parse_position_description`：`声母[开合][等|重纽AB]韵调` → 六字段（单遍右起，
+    每字段至多一次）；3872 条 0 漏网，与 Qieyun 规范位置集逐字段对账 3872/3872。
+  - 锚点：703 字（`EASTERN_HAN_DB`，`s2t` 对齐）中 **493 有锚点 / 210 无**
+    （`unanchored_characters()` 可查，不回填；人/今/他 只作反切字、使 缺席）。
+  - `initial_correspondence()`：30 东汉母→中古声母（初母 1 字无锚定，不在表内）；
+    `final_correspondence()`：东汉韵部→中古韵名；合计 **526 条（字,中古位置）对**，
+    每对附字表作文字依据，`n<3` 标 `is_exception`。
+  - 钉住的散点示例：见母→見51/匣1、匣母→匣24/云13/影2、透母→昌5/透4/徹1、
+    阳韵→陽17/唐13/庚8、鱼韵(上)→魚11/麻6/模5/虞2、钟韵→鍾12（1:1）。
+- **锚点空间 38 声母 / 58 韵 / 4 调**：CC0 表与 Qieyun 规范集同粒度（双向 missing=[]），
+  属上游数据粒度，**不是**《广韵》106 韵分法——文档与报告一律不声称 106 覆盖。
+- 报告 CLI：`scripts/correspondence_report.py`（默认完整报告 / `--char` 单字 / `--json`），
+  来源（CC0 + blob SHA）与三条局限全部显式打印。
+- 性质：对应表是**锚定交集上的观测共现**（非音变规律），模块 docstring 与报告标题均写明。
+- 测试：`EasternMcCorrespondenceTests` 21 项（解析器 6 + 覆盖/钉数 11 + 单字查询 2 +
+  来源报告 2 + Qieyun 对账 1，Qieyun 缺时跳过）。
+
+### 下一阶段（第四阶段，用户已定顺序）
 
 - 一句话多时期音频对照（东汉 / 中古 / 现代同句三版）；
 - 翻译层词典未命中时接 LLM；多音字按词切分选音；
@@ -117,6 +137,7 @@ $env:PYTHONUTF8 = "1"; $env:PYTHONIOENCODING = "utf-8"
 | 白话→古文（词典） | ✅ |
 | 东汉音 IPA（703 字，legacy 路径） | ✅ |
 | 11 家学者拟音逐字合成 | ✅ eSpeak 出声，双列对照 UI |
+| 东汉→中古音类对应表 | ✅ 493/703 锚定，526 对，30 母/58 韵粒度，`scripts/correspondence_report.py` |
 | 古韵合成 eSpeak | ✅ 32540 采样点 / 1.48s |
 | Edge TTS 现代朗读 | ✅ MP3 |
 | 切韵对照（Qieyun） | ✅（依赖坑 2 的 networkx 补丁） |

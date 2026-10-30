@@ -16,6 +16,10 @@ from language.history import (TIMELINE, get_period, get_system, lookup_reading,
                                SCHOLAR_SYSTEMS_OLD,
                                compare_character)
 from phonology_db import EASTERN_HAN_DB
+from language.history import eastern_mc_correspondence as emc
+from language.history.qieyun_data import (
+    load_qieyun_positions as load_qieyun_positions_all,
+)
 from language.ancient_tts import text_to_ipa
 from language.phoneme_capability import (
     ESPEAK_IPA_MAP, classify_symbol, assess_ipa, system_capability_report,
@@ -719,6 +723,215 @@ class PhonemeCapabilityTests(unittest.TestCase):
         with self.assertRaises(KeyError):
             system_capability_report("nonexistent_system")
 
+
+
+class EasternMcCorrespondenceTests(unittest.TestCase):
+    """东汉 → 中古音类对应表（观测对应，非音变规律）的契约。"""
+
+    # ---- 音韵地位描述解析 ----
+
+    def test_parse_plain_grade_rhyme_tone(self):
+        (p,) = emc.parse_position_description("端一東平")
+        self.assertEqual((p.shengmu, p.kaihhe, p.deng, p.chongniu, p.yun, p.sheng),
+                         ("端", None, "一", None, "東", "平"))
+
+    def test_parse_open_close_and_grade(self):
+        (p,) = emc.parse_position_description("端開一登入")
+        self.assertEqual((p.shengmu, p.kaihhe, p.deng, p.chongniu, p.yun, p.sheng),
+                         ("端", "開", "一", None, "登", "入"))
+        # 等可省略（表内确有此类描述）
+        (p,) = emc.parse_position_description("端開登入")
+        self.assertEqual((p.shengmu, p.kaihhe, p.deng, p.chongniu, p.yun, p.sheng),
+                         ("端", "開", None, None, "登", "入"))
+
+    def test_parse_chongniu_with_and_without_open_close(self):
+        (p,) = emc.parse_position_description("見開B支平")
+        self.assertEqual((p.shengmu, p.kaihhe, p.deng, p.chongniu, p.yun, p.sheng),
+                         ("見", "開", None, "B", "支", "平"))
+        (p,) = emc.parse_position_description("明B支平")
+        self.assertEqual((p.shengmu, p.kaihhe, p.deng, p.chongniu, p.yun, p.sheng),
+                         ("明", None, None, "B", "支", "平"))
+
+    def test_parse_three_char_description(self):
+        (p,) = emc.parse_position_description("端冬平")
+        self.assertEqual((p.shengmu, p.kaihhe, p.deng, p.chongniu, p.yun, p.sheng),
+                         ("端", None, None, None, "冬", "平"))
+
+    def test_parse_rejects_garbage(self):
+        self.assertEqual(emc.parse_position_description(""), ())
+        self.assertEqual(emc.parse_position_description(None), ())
+        self.assertEqual(emc.parse_position_description("東平"), ())
+        self.assertEqual(emc.parse_position_description("端東"), ())
+
+    def test_parse_multiple_alternatives(self):
+        ps = emc.parse_position_description("端一東平/端開一東平")
+        self.assertEqual(len(ps), 2)
+        self.assertIsNone(ps[0].kaihhe)
+        self.assertEqual(ps[1].kaihhe, "開")
+
+    # ---- 表完整性与锚点覆盖 ----
+
+    def test_bundled_table_parses_completely(self):
+        # 3872 条记录全部可解析（上游表与解析器零漏网）
+        total = 0
+        for _head, records in load_qieyun_positions_all().items():
+            for record in records:
+                self.assertTrue(emc.parse_position_description(record.position_description),
+                                record.position_description)
+                total += 1
+        self.assertEqual(total, 3872)
+
+    def test_anchor_counts_are_pinned(self):
+        cov = emc.anchor_coverage()
+        self.assertEqual(cov["han_total"], 703)
+        self.assertEqual(cov["anchored"], 493)
+        self.assertEqual(cov["unanchored"], 210)
+        self.assertEqual(cov["pair_total"], 526)
+        self.assertEqual(cov["table_rows"], 3872)
+        self.assertEqual(cov["table_distinct_heads"], 3707)
+        self.assertEqual(cov["mc_initials"], 38)
+        self.assertEqual(cov["mc_rhymes"], 58)
+
+    def test_unanchored_common_chars_are_exposed_not_backfilled(self):
+        # 人/今/他 在上游表中只作反切字出现；使 完全不出现——如实暴露
+        missing = set(emc.unanchored_characters())
+        for ch in ("人", "今", "他", "使"):
+            self.assertIn(ch, missing)
+        self.assertNotIn("东", missing)
+
+    # ---- 声母对应表 ----
+
+    def test_initial_table_shape(self):
+        table = emc.initial_correspondence()
+        # 31 个东汉母中初母（仅 1 字）无锚定字，表内 30 母
+        self.assertEqual(len(table), 30)
+        self.assertNotIn("初母", table)
+        self.assertEqual(sum(p.n for pairs in table.values()
+                             for p in pairs.values()), 526)
+
+    def test_initial_table_pins_classic_splits(self):
+        t = emc.initial_correspondence()
+        self.assertEqual(t["见母"]["見"].n, 51)
+        self.assertEqual(t["匣母"]["匣"].n, 24)
+        self.assertEqual(t["匣母"]["云"].n, 13)
+        self.assertEqual(t["定母"]["定"].n, 17)
+        self.assertEqual(t["定母"]["澄"].n, 6)
+        self.assertEqual(t["端母"]["端"].n, 15)
+        self.assertEqual(t["端母"]["知"].n, 7)
+        self.assertEqual(t["透母"]["昌"].n, 5)
+        self.assertEqual(t["透母"]["透"].n, 4)
+        self.assertEqual(t["帮母"]["幫"].n, 20)
+        self.assertEqual(t["帮母"]["滂"].n, 1)
+
+    def test_each_initial_is_concentrated(self):
+        # 每个东汉母的主导中古母占该类样本半数以上（观测集中性，非规律）
+        for dh, pairs in emc.initial_correspondence().items():
+            total = sum(p.n for p in pairs.values())
+            dominant = max(p.n for p in pairs.values())
+            self.assertGreaterEqual(dominant, total / 2, dh)
+
+    # ---- 韵母对应表 ----
+
+    def test_final_table_shape(self):
+        t = emc.final_correspondence()
+        self.assertEqual(sum(p.n for pairs in t.values()
+                             for p in pairs.values()), 526)
+        self.assertIn("阳韵", t)
+
+    def test_final_table_pins_classic_splits(self):
+        t = emc.final_correspondence()
+        self.assertEqual(t["阳韵"]["陽"].n, 17)
+        self.assertEqual(t["阳韵"]["唐"].n, 13)
+        self.assertEqual(t["阳韵"]["庚"].n, 8)
+        self.assertEqual(t["东韵"]["東"].n, 19)
+        self.assertEqual(t["东韵"]["江"].n, 1)
+        self.assertEqual(t["鱼韵(上)"]["魚"].n, 11)
+        self.assertEqual(t["鱼韵(上)"]["麻"].n, 6)
+        self.assertEqual(t["鱼韵(上)"]["模"].n, 5)
+        self.assertEqual(t["鱼韵(上)"]["虞"].n, 2)
+        # 钟韵 → 鍾 1:1 无散点
+        self.assertEqual(len(t["钟韵"]), 1)
+        self.assertEqual(t["钟韵"]["鍾"].n, 12)
+        self.assertEqual(t["德韵"]["登"].n, 6)
+        self.assertEqual(t["祭韵(去)"]["泰"].n, 7)
+
+    def test_pair_chars_are_the_textual_basis(self):
+        # 每对（东汉类 → 中古类）都附字表作为文字依据
+        pair = emc.initial_correspondence()["见母"]["匣"]
+        self.assertEqual(pair.n, 1)
+        self.assertEqual(len(pair.chars), 1)
+        ch = pair.chars[0]
+        self.assertEqual(EASTERN_HAN_DB[ch]["init"], "见母")
+        row = emc.anchor_for(ch)
+        self.assertTrue(row.anchored)
+        self.assertTrue(any(p.shengmu == "匣" for p in row.positions))
+
+    def test_small_pairs_are_flagged_as_exceptions(self):
+        self.assertTrue(emc.initial_correspondence()["见母"]["匣"].is_exception)
+        self.assertFalse(emc.initial_correspondence()["心母"]["心"].is_exception)
+
+    # ---- 单字锚点查询 ----
+
+    def test_anchor_for_single_char(self):
+        row = emc.anchor_for("东")
+        self.assertIsNotNone(row)
+        self.assertEqual(row.traditional, "東")
+        self.assertEqual(row.han_init, EASTERN_HAN_DB["东"]["init"])
+        self.assertTrue(row.anchored)
+        self.assertTrue(any(p.shengmu == "端" and p.yun == "東"
+                            for p in row.positions))
+
+    def test_anchor_for_unanchored_and_unknown(self):
+        self.assertFalse(emc.anchor_for("使").anchored)
+        self.assertIsNone(emc.anchor_for("龘"))
+
+    # ---- 来源与报告 ----
+
+    def test_provenance_exposes_sources_and_limitations(self):
+        prov = emc.provenance()
+        self.assertEqual(prov["mc_anchor_source"]["license"], "CC0")
+        self.assertEqual(prov["mc_anchor_source"]["source_blob_sha"],
+                         "93ca1b1551b30bba9c76fe21078f156b8299d9cc")
+        self.assertEqual(prov["han_source"]["source_status"], "legacy_experimental")
+        self.assertEqual(len(prov["limitations"]), 3)
+        self.assertIn("observed co-occurrence", prov["method"])
+
+    def test_report_contains_headline_facts(self):
+        report = emc.build_report()
+        self.assertIn("493/703", report)
+        self.assertIn("526", report)
+        self.assertIn("非音变规律", report)
+        self.assertIn("38 声母 / 58 韵", report)
+        self.assertIn("210", report)
+
+    # ---- 与 Qieyun 规范位置集对账 ----
+
+    def test_parser_matches_qieyun_canonical_fields(self):
+        try:
+            import Qieyun
+        except ImportError:
+            self.skipTest("Qieyun not installed")
+        fn = [a for a in dir(Qieyun) if a.startswith("iter")][0]
+        obj0 = list(getattr(Qieyun, fn)())[0]
+        from_desc = obj0.from描述
+        checked = 0
+        for _head, records in load_qieyun_positions_all().items():
+            for record in records:
+                desc = record.position_description
+                obj = from_desc(desc)
+                self.assertIsNotNone(obj, desc)
+                (p,) = emc.parse_position_description(desc)
+                self.assertEqual(p.shengmu, obj.母, desc)
+                self.assertEqual(p.yun, obj.韻, desc)
+                self.assertEqual(p.sheng, obj.聲, desc)
+                if p.kaihhe:
+                    self.assertEqual(p.kaihhe, obj.呼, desc)
+                if p.deng:
+                    self.assertEqual(p.deng, obj.等, desc)
+                if p.chongniu:
+                    self.assertEqual(p.chongniu, obj.重紐, desc)
+                checked += 1
+        self.assertEqual(checked, 3872)
 
 
 if __name__ == "__main__":

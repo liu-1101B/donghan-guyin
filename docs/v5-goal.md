@@ -19,7 +19,7 @@
 
 | 阶段 | 现有落点 |
 |---|---|
-| 一 | `language/history/timeline.py`、`systems.py` |
+| 一 | `language/history/timeline.py`、`systems.py`、`eastern_mc_correspondence.py` |
 | 二 | `language/history/{qieyun,phono_ml,zhongyuan,sinica_ccr,sinica_scholar}_data.py`、`data/historical/`、`scripts/import_sinica_ccr.py` |
 | 三 | `language/ancient_tts.py`、`sound_synth.py`、`packaging/download_espeak.py` |
 | 四 | `services/llm_client.py`、`language/classical_translator.py`、`language/turn_engine.py`、`language/style_prompt.py` |
@@ -51,10 +51,29 @@
 无法回答「同一句话在东汉、中古、近代分别怎么说」。`docs/HISTORICAL_PHONOLOGY_ARCHITECTURE.md`
 也明确写了：选中某一年不应自动推断唯一发音。
 
-**下一步**
+**下一步（2026-10-30 完成）**
 
 先做有据可查的**音类对应**（不是音值）：以《广韵》地位为锚，建 东汉 → 中古 的声母/韵母
 对应表，并标注每条的文献依据与例外。
+
+已完成（`language/history/eastern_mc_correspondence.py`，单提交）：
+
+- **解析器** `parse_position_description`：把 `声母[开合][等|重纽AB]韵调` 描述拆成
+  声母/开合/等/重纽/韵/调 六字段，3872 条记录 0 漏网；与 Qieyun 规范位置集
+  （`iter音韻地位` + `from描述`）逐字段对账 3872/3872 一致（测试可跳过，Qieyun 缺时）。
+- **锚点**：东汉 703 字（`EASTERN_HAN_DB`，`legacy_experimental`/`unassessed`）经
+  OpenCC `s2t` 对上《广韵》反切表 3707 首字，**493 字有锚点、210 字无**（如实暴露，
+  不回填；如 人/今/他 在表中只作反切字、使 完全缺席）。
+- **声母对应表**：30 个东汉母 → 中古声母（初母仅 1 字无锚定，不在表内），
+  每对附字表作文字依据、n<3 标 `is_exception`；钉住的散点如 见母→見51/匣1、
+  匣母→匣24/云13/影2、透母→昌5/透4/徹1。
+- **韵母对应表**：东汉韵部 → 中古韵名，526 条（字,中古位置）对全量可查；
+  钉住的如 阳韵→陽17/唐13/庚8、鱼韵(上)→魚11/麻6/模5/虞2、钟韵→鍾12（1:1 无散点）。
+- **锚点空间粒度**：38 声母 / 58 韵 / 4 调，两来源（CC0 表与 Qieyun 规范集）完全一致；
+  这是上游数据粒度，**不是**《广韵》传统 106 韵分法，文档与报告均不声称 106 覆盖。
+- 报告：`scripts/correspondence_report.py`（`--char` 单字查询、`--json` 概要、完整中文报告），
+  来源（CC0 + blob SHA）与三条局限全部显式打印。
+- 对应表是**锚定交集上的观测共现**，不是音变规律——模块 docstring 与报告标题都写明。
 
 ---
 
@@ -248,6 +267,7 @@
 | 12 | 11 家学者拟音接入（中古 6 + 上古 5） | ✅ Sinica CCR（PDM） |
 | 13 | 学者体系逐字合成 + 双列对照 UI | ✅ 第三阶段 ①②③ |
 | 14 | 同字跨体系对照 + 覆盖表 UI | ✅ `compare_character` |
+| 15 | 东汉→中古音类对应表（493/703 锚定，526 对，38 母/58 韵粒度） | ✅ 第一阶段收尾 |
 
 这份基线是**现状**，不是 v5 的完成标准。v5 的完成标准是上面六个阶段都到位。
 
