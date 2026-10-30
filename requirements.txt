@@ -10,6 +10,12 @@ streamlit>=1.28.0
 numpy>=1.24.0,<2.0
 scipy>=1.10.0,<1.14
 
+# pyarrow 是 streamlit 的传递依赖（约束 >=10,<27），但 18 起要求 numpy>=2，
+# 与上面的 numpy<2 冲突：装到 26 会让 robot/app.py 的「按住说话」自定义组件
+# 直接报 "pyarrow requires NumPy 2.0 or newer"，整块录音控件不可用。
+# 17.0.0 是仍支持 numpy 1.26 的版本，已验证与 Qieyun 共存。
+pyarrow>=10,<18
+
 # 语音合成
 edge-tts>=6.0.0
 gtts>=2.5.0

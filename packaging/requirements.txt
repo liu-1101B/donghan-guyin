@@ -4,6 +4,8 @@ streamlit>=1.28.0
 # qieyun -> networkx<2.6 依赖 numpy<2，scipy>=1.14 却要求 numpy>=2。
 numpy>=1.24.0,<2.0
 scipy>=1.10.0,<1.14
+# streamlit 的传递依赖；18 起要求 numpy>=2，会让 v4 的录音组件失效
+pyarrow>=10,<18
 
 edge-tts>=6.0.0
 gtts>=2.5.0
