@@ -1,77 +1,222 @@
-# v5 目标：这条开发分支要交付一个完整的产品
+# 东汉古音 v5 开发路线
 
-> 记录时间：2026-10-30　提出：刘佳祺　适用分支：`feat/historical-phonology-foundation`
+> 路线提出：刘佳祺　记录：2026-10-30　适用分支：`feat/historical-phonology-foundation`
+>
+> 本文取代此前草稿，是 v5 的正式阶段划分。每阶段下方的「现状」均为代码盘点结论，不是规划措辞。
 
-## 一句话目标
+## 路线总览
 
-这条分支的终点是 **v5**。v5 必须是**功能完整、开箱可用**的东西，
-而不是"界面能开、功能一半是灰的"的半成品。
-凡是界面上出现的入口，背后都要有能真正跑通的实现。
+| 阶段 | 核心方向 | 目标 |
+|---|---|---|
+| 第一阶段 | 历史语言体系 | 从东汉古音扩展为跨历史时期的语言系统 |
+| 第二阶段 | 古音资料库 | 整合不同学者的拟音方案、音韵资料及文献来源 |
+| 第三阶段 | 发音引擎 | 支持不同历史时期、学派和拟音方案切换 |
+| 第四阶段 | 智能对话 | 优化现代汉语、文言文、历史语音之间的转换 |
+| 第五阶段 | 机器人交互 | 完善语音交互、连续对话和多种发声模式 |
+| 第六阶段 | 工程化 | 完善数据管理、配置、日志、测试和跨平台打包 |
 
-## 什么叫"完整"（验收定义）
+## 阶段与现有模块的对应
 
-一个干净机器上，按 README 装完依赖、放好模型之后，下面每一项都要能独立跑通，
-不允许"静默降级"——降级可以，但必须在界面上明确告诉用户当前在用什么、缺什么。
+| 阶段 | 现有落点 |
+|---|---|
+| 一 | `language/history/timeline.py`、`systems.py` |
+| 二 | `language/history/{qieyun,phono_ml,zhongyuan,sinica_ccr}_data.py`、`data/historical/`、`scripts/import_sinica_ccr.py` |
+| 三 | `language/ancient_tts.py`、`sound_synth.py`、`packaging/download_espeak.py` |
+| 四 | `services/llm_client.py`、`language/classical_translator.py`、`language/turn_engine.py`、`language/style_prompt.py` |
+| 五 | `robot/`（`app.py`、`recorder.py`、`windows_audio.py`、`audio_io.py`、`session.py`）、`components/hold_to_record/` |
+| 六 | `tests/`、`.github/workflows/`、`config/settings.yaml`、`scripts/download_models.py`、`packaging/` |
 
-| # | 功能 | 验收标准 | 当前状态 |
+---
+
+## 第一阶段：历史语言体系
+
+**现状（已具备）**
+
+`timeline.py` 定义 6 个时期，允许区间重叠（语音演变是连续的）：
+
+| id | 年份 | 标签 |
+|---|---|---|
+| `old_chinese` | -1200 ~ 220 | 上古汉语 |
+| `eastern_han` | 25 ~ 220 | 东汉 |
+| `middle_chinese` | 581 ~ 907 | 中古汉语 |
+| `late_middle_chinese` | 800 ~ 1279 | 晚唐至宋 |
+| `early_mandarin` | 1200 ~ 1911 | 近代汉语 |
+| `modern_chinese` | 1912 ~ 2100 | 现代汉语 |
+
+`period_at(year)` 返回覆盖该年的**所有**时期，不强行收敛为唯一结论。
+
+**差距**
+
+时期目前只是「导航标签 + 数据分区」，还不是「语言系统」：没有跨时期的音变规则链，
+无法回答「同一句话在东汉、中古、近代分别怎么说」。`docs/HISTORICAL_PHONOLOGY_ARCHITECTURE.md`
+也明确写了：选中某一年不应自动推断唯一发音。
+
+**下一步**
+
+先做有据可查的**音类对应**（不是音值）：以《广韵》地位为锚，建 东汉 → 中古 的声母/韵母
+对应表，并标注每条的文献依据与例外。
+
+---
+
+## 第二阶段：古音资料库
+
+**现状（已接入 4 套实数据，共 379 万+ 条）**
+
+| 数据 | 条目 | 许可/来源 | 接口 |
 |---|---|---|---|
-| 1 | 白话 → 古文 | 输入白话，输出文言，词典模式可用 | ✅ 已验证（「今日天象甚佳…」） |
-| 2 | 东汉音 IPA 标注 | 逐字给出声母/韵母/声调/切韵对照 | ✅ 已验证（703 字库） |
-| 3 | 古韵合成（历史拟音轨） | eSpeak 真实出声，非共振峰回退 | ✅ 已验证（32540 采样点 / 1.48s） |
-| 4 | 现代朗读（Edge TTS 轨） | 联网时合成自然语音 | ✅ 已验证（MP3 35712 B，不再回退） |
-| 5 | 机械参考轨 | 纯参数合成，学术对照用 | ✅ 已验证 |
-| 6 | 按住说话录音 | 浏览器授权后能录到音频并回传 | ✅ 本机录音链路通（selftest True）；页面端待手测 |
-| 7 | 语音识别（ASR） | 录完能转成文字，优先 SenseVoice | ✅ 已验证（TTS→ASR 闭环逐字正确） |
-| 8 | 文言对谈（LLM） | 本地词典模式可用；填 API 后走大模型 | ✅ 两种模式均验证（API 8/8 成功） |
-| 9 | 设备播放（蓝牙/USB） | 能选输出设备并从该设备出声 | ✅ 已验证（枚举 5 个输出 + 自检回放成功） |
-| 10 | 多轮对话历史 | 保留最近 N 轮，可清空 | ✅ 已验证 |
-| 11 | 历史音韵查询 | 按时期/体系查离线数据 | ✅ 已验证（378214 条） |
+| 《广韵》反切音韵地位 | 3800+ | CC0（nk2028/tshet-uinh-data，blob SHA 已记录） | `lookup_qieyun_positions` |
+| PHONO-ML 中古转写（Baxter–Sagart） | 20000+ | 见 `data/historical/PHONO-ML_ATTRIBUTION.md` | `lookup_phono_ml` |
+| 中原音韵（5 家拟音） | 5000+ | 见 `data/historical/README.md` | `lookup_zhongyuan` |
+| 中研院汉字构形库（含东汉韵部） | 378214 | PDM（Sinica CCR） | `lookup_sinica_ccr_records` |
 
-> 2026-10-30 实测记录：依赖层（miniaudio / sounddevice / opencc / vosk /
-> sherpa-onnx）已装齐；`scripts/download_models.py` 已支持断点续传。
->
-> ASR 闭环实测：Edge TTS 合成「今天天气真好，我和朋友一起去河边散步」→
-> miniaudio 解码为 16 kHz WAV → SenseVoice 识别为
-> 「今天天气真好，我和朋友一起去河边散步。」（逐字正确，自动补标点）。
-> `available_backends()` 返回 `['sensevoice', 'vosk']`，`pick_backend('auto')`
-> 自动选中 SenseVoice。Vosk 兜底也已下载并就绪，实测同一段音频：
->
-> | 后端 | 结果 |
-> |---|---|
-> | SenseVoice | `今天天气真好，我和朋友一起去河边散步。`（带标点） |
-> | Vosk | `今天 天气 真好 我 和 朋友 一起去 河边 散步`（无标点、空格断词） |
->
-> 差别与 `services/asr_client.py` 文件头的说明一致，故默认仍用 SenseVoice。
+另有 10 个**仅登记元数据**的体系（郑张尚芳上古、白一平—沙加尔上古、高本汉/王力/郑张尚芳中古、
+现代普通话等），查询返回 `not_integrated`，不编造 IPA。
 
-## 当前已知缺口
+**差距（关键）**
 
-### 依赖层
-- `pyarrow` 必须 `<18`：18 起要求 numpy≥2，而 `Qieyun` 要求 numpy<2。
-  装到 26 会导致「按住说话」自定义组件直接报错、整块录音控件不可用。
-- `numpy` 必须 `<2`、`scipy` 必须 `<1.14`：否则 `Qieyun`（切韵对照）静默失效。
-- 这三个上限互相咬合，改动任何一个都要重跑一遍 `Qieyun` 导入 + v4 界面渲染。
+14 个注册体系里 **0 个能产出可合成 IPA** —— 逐个实测 `available` 全为 `False`：
 
-### 模型层
-- ASR 需要模型文件，放 `models/`（已被 .gitignore 忽略）：
-  - 首选 `models/sense-voice/`（sherpa-onnx，约 230 MB，中文最好，自带标点）
-  - 兜底 `models/vosk-small-cn/`（约 44 MB）
-- 模型不进仓库（体积原因），但**必须有可复现的下载方式**，
-  不能靠"用户自己找"——这是 v5 必须解决的一项。
+```
+guangyun_qieyun_position      source_record          available=False
+phono_ml_baxter_sagart_mc     source_reconstruction  available=False
+zhongyuan_*（5 个）            source_reconstruction  available=False
+zhengzhang_oc / baxter_sagart_oc / karlgren_mc /
+wangli_mc / zhengzhang_mc / mandarin_modern            not_integrated
+```
 
-### 能力层
-- LLM 对谈需要 `.env` 里的 `LLM_BASE_URL` / `LLM_MODEL` / `LLM_API_KEY`，
-  或本机跑 `llama-server`（默认 127.0.0.1:8080）。没配时走本地词典回退，
-  这属于**支持的模式**，但界面上必须说清楚当前是哪种模式。
-- **推理模型需要更大的 token 预算**（2026-10-30 实测）：`deepseek-flash` 这类
-  模型会先写 `reasoning_content`（实测 261–895 字），正文排在后面。原来
-  `max_tokens=300` 常被推理吃光，导致 `finish_reason=length`、正文截断甚至为空
-  —— 而代码仍把结果标记成 `source=cloud`，表现为"选了 API 却答不出来"。
-  现已提到 2048、截断时用 4096 重试，且空正文/截断一律回退而不是返回空串。
-  换用其他推理模型时请留意这个预算。
+也就是说：资料能查、能追溯来源，但没有任何一条能直接送到发音引擎。
+真正的「拟音表逐字导入 + 覆盖率报告」还没做。
+
+**下一步**
+
+选定**一个**体系做完整闭环（建议王力或郑张尚芳中古），导入逐字拟音，产出
+`覆盖字数 / 总字数 / 争议项 / 失败案例` 报告，再谈第二个体系。
+
+---
+
+## 第三阶段：发音引擎
+
+**现状**
+
+- 双引擎可用：eSpeak-ng 1.52（捆绑，`ESPEAK_DATA_PATH` 已正确设置）+ 共振峰合成回退
+- 实测：`synth_with_espeak` 3 音节出 32540 采样点 / 1.48s，确认非回退
+- 现代朗读走 Edge TTS，实测可用
+
+**差距（v5 最核心的缺口）**
+
+发音链路与数据层是**断开**的：
+
+```python
+# language/ancient_tts.py
+def text_to_ipa(classical: str) -> AncientResult:
+    ...
+    data = lookup_char(ch)      # ← 只查 phonology_db 的 703 字东汉旧表
+```
+
+`text_to_ipa` / `synthesize_ancient` 都没有 `system_id` / `period` 参数。
+界面上可以在「历史音韵查询」里选时期和体系，但**合成永远走东汉旧表**，
+选的体系对声音没有任何影响。
+
+而且即使接上，第二阶段也还没有可合成数据 —— 两个阶段互为前提。
+
+**下一步**
+
+1. 给 `text_to_ipa` 增加 `system_id`，改为调用 `lookup_reading(ch, system_id)`；
+2. 建立「音素 → eSpeak」能力矩阵，明确哪些 IPA 能读、哪些必须回退共振峰；
+3. 拟音可信度与合成器能力**分别报告**，不要混为一个分数。
+
+---
+
+## 第四阶段：智能对话
+
+**现状（本轮已验证）**
+
+- `llm_client` 双模式：API（`cloud`）/ 本地词典（`local-dictionary`），词典未命中时宁可不答也不编造
+- API 模式 8/8 连续成功（修复推理模型 token 预算后）
+- `make_turn` 自然/古韵两种发声都产出真实音频（MP3 35712 B / WAV 348696 B）
+- 多轮历史保留最近 6 轮进上下文、8 轮进会话
+
+**差距**
+
+- 翻译仍以 `simple_translate` 词典级为主，长句与生僻表达质量有限
+- 「现代汉语 ↔ 文言文 ↔ 历史语音」三者之间的**对照**还没串起来：
+  一句话无法一次给出东汉音 / 中古音 / 现代音三个版本
+- 没有多音字的词级上下文选音
+
+**下一步**
+
+给一句话生成多时期音频对照；翻译层在词典未命中时接 LLM；多音字按词切分选音。
+
+---
+
+## 第五阶段：机器人交互
+
+**现状**
+
+- v4 界面：按住说话、双模式、设备选择、对话历史（无头渲染 0 异常）
+- 本机链路已验：录音 2s + 回放成功、11 个输出设备、2 个麦克风
+- ASR：SenseVoice 逐字正确，Vosk 兜底可用
+
+**差距**
+
+- Jetson AGX Orin + 蓝牙音箱的真机链路**从未在此环境验证**（只有 Linux 脚本与 Windows 分支）
+- 无连续对话（唤醒词 / 打断 / 抢话处理）
+- 发声模式只有「自然 / 古韵」两种，未与第一阶段的时期体系联动
+
+**下一步**
+
+列真机回归清单（蓝牙配对、A2DP sink、音量、断连重连），再做打断与连续对话。
+
+---
+
+## 第六阶段：工程化
+
+**现状**
+
+- 测试：`tests/test_historical_phonology.py` 23 项，CI 跑 `compileall` + `unittest`（带路径过滤）
+- 配置：`config/settings.yaml` + `.env`（界面可写，已入 `.gitignore`）
+- 数据下载：`scripts/download_models.py` 支持 HTTP Range 续传 + 镜像轮换
+- 打包：`packaging/`（v3 PyInstaller + v4 便携包）
+
+**差距**
+
+- **日志**是 `print`，无级别、无轮转、无结构化字段，排障靠人肉
+- **测试只覆盖音韵数据层**：音频合成、TTS、ASR、LLM 全靠手工验证（本轮 11 项就是手测的）
+- 依赖上限（`numpy<2`、`scipy<1.14`、`pyarrow<18`）只写在注释里，**CI 没有断言**，
+  谁改了 requirements 也不会红
+- 跨平台是两条互不相干的路径（Linux 脚本 vs Windows 便携包），没有统一抽象
+
+**下一步**
+
+1. 结构化日志（级别 + 模块前缀），替换散落的 print；
+2. 把本轮的 11 项手测固化成自动化冒烟（音频、ASR、LLM 可用 mock）；
+3. CI 加依赖断言：`Qieyun` 可导入、`pyarrow/numpy/scipy` 版本匹配；
+4. 收口根目录与 `packaging/` 的分叉（`sound_synth.py` 已经分叉过）。
+
+---
+
+## 当前已交付基线（2026-10-30 实测）
+
+| # | 功能 | 状态 |
+|---|---|---|
+| 1 | 白话 → 古文 | ✅ 词典模式 |
+| 2 | 东汉音 IPA 标注 | ✅ 703 字库 |
+| 3 | 古韵合成（历史拟音轨） | ✅ eSpeak 真实出声 |
+| 4 | 现代朗读（Edge TTS） | ✅ |
+| 5 | 机械参考轨 | ✅ |
+| 6 | 按住说话录音 | ✅ 本机链路通 |
+| 7 | 语音识别 ASR | ✅ SenseVoice + Vosk |
+| 8 | 文言对谈（LLM） | ✅ API 与词典双模式 |
+| 9 | 设备播放 | ✅ 5 个输出设备 |
+| 10 | 多轮对话历史 | ✅ |
+| 11 | 历史音韵查询 | ✅ 378214 条 |
+
+这份基线是**现状**，不是 v5 的完成标准。v5 的完成标准是上面六个阶段都到位。
 
 ## v5 完成判据
 
-1. 上面表格 11 项全部 ✅（第 8 项允许"词典模式 + 可选 API"两种都通）。
-2. 任何降级都在界面上显式标注，不出现"功能凭空消失"。
-3. 新机器按 README 能从零装到可用，包括模型下载步骤。
-4. CI 覆盖依赖上限（至少断言 `Qieyun` 可导入、`pyarrow`/`numpy`/`scipy` 版本匹配）。
+1. 六个阶段各自的「下一步」全部落实，且每项有可复现验证。
+2. 至少一个学者体系能从「查得到」走到「播得出」，并附覆盖率与争议项报告。
+3. 发音引擎能按时期/体系切换，且切换结果在音频上可区分。
+4. 任何降级（回退、缺失、未接入）都在界面上显式标注，不出现功能凭空消失。
+5. 新机器按 README 能从零装到可用，包括模型下载与依赖上限校验。
