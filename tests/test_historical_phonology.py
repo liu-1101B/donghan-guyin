@@ -591,6 +591,48 @@ class TtsSystemRoutingTests(unittest.TestCase):
         self.assertIsNone(r.system_id)
 
 
+class EraComparisonTests(unittest.TestCase):
+    """Phase 4 (1): 一句话三时期音频对照（东汉 / 中古 / 现代）。"""
+
+    def test_three_eras_produce_independent_audio(self):
+        from language.era_audio import (make_era_comparison, ERA_EASTERN,
+                                        ERA_MIDDLE, ERA_MODERN)
+        eastern, middle, modern = make_era_comparison("天子")
+        self.assertEqual((eastern.key, middle.key, modern.key),
+                         (ERA_EASTERN, ERA_MIDDLE, ERA_MODERN))
+        # 东汉：tʰen（洛阳官音重建，703 字旧表）
+        self.assertTrue(eastern.has_audio)
+        self.assertEqual(eastern.kind, "wav")
+        self.assertIn("tʰen", eastern.ipa)
+        # 中古王力：tʰien（与东汉同句不同音，正是对照的意义）
+        self.assertTrue(middle.has_audio)
+        self.assertIn("tʰien", middle.ipa)
+        self.assertNotEqual(eastern.ipa, middle.ipa)
+        self.assertEqual(middle.coverage_pct, 100.0)
+        # 现代：有网 → 真 MP3；断网 → 诚实的 tts_unavailable，绝不伪造
+        if modern.has_audio:
+            self.assertEqual(modern.kind, "mp3")
+            self.assertEqual(modern.status, "ok")
+        else:
+            self.assertEqual(modern.status, "tts_unavailable")
+            self.assertIn("网络不可用", modern.note)
+
+    def test_empty_text_reports_text_empty_for_all_eras(self):
+        from language.era_audio import make_era_comparison
+        for era in make_era_comparison(""):
+            self.assertEqual(era.status, "text_empty")
+            self.assertFalse(era.has_audio)
+            self.assertTrue(era.note)
+
+    def test_middle_system_label_and_unknown_id(self):
+        from language.era_audio import make_era_comparison, \
+            middle_system_label
+        self.assertEqual(middle_system_label("wangli_mc"), "王力系統")
+        self.assertEqual(middle_system_label("nope"), "nope")
+        with self.assertRaises(KeyError):
+            make_era_comparison("天子", middle_system="nonexistent")
+
+
 class PhonemeCapabilityTests(unittest.TestCase):
     """Phase 3 (2): IPA → 合成器能力矩阵（eSpeak 主路径 + 共振峰回退）。"""
 

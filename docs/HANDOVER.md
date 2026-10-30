@@ -10,7 +10,7 @@
 - 仓库根：`donghan-guyin/`，当前根目录检出的是 **`main`**
 - 本分支的工作树：**`donghan-guyin/.wt-feat-phon/`** ← 所有开发都在这里
 - 分支：`feat/historical-phonology-foundation`
-- 状态：**领先 `origin` 78 个提交，全部本地未推送**（没有推送凭据，**不要推送**）
+- 状态：**领先 `origin` 80 个提交，全部本地未推送**（没有推送凭据，**不要推送**）
 - 工作区约定：`run_feat_tests.py`（工作树根，未跟踪，测试运行器，**保留**）
 
 ## 二、运行环境（照抄即可）
@@ -124,10 +124,29 @@ $env:PYTHONUTF8 = "1"; $env:PYTHONIOENCODING = "utf-8"
 - 测试：`EasternMcCorrespondenceTests` 21 项（解析器 6 + 覆盖/钉数 11 + 单字查询 2 +
   来源报告 2 + Qieyun 对账 1，Qieyun 缺时跳过）。
 
-### 下一阶段（第四阶段，用户已定顺序）
+### 第四阶段 ① ✅ 已完成（一句话三时期音频对照，单提交）
 
-- 一句话多时期音频对照（东汉 / 中古 / 现代同句三版）；
-- 翻译层词典未命中时接 LLM；多音字按词切分选音；
+- 新模块 `language/era_audio.py`：`EraAudio`（key/label/data/kind/status/note/ipa/
+  coverage_pct/approx/unknown）+ `make_era_comparison(sentence, middle_system="wangli_mc", ...)`
+  → (东汉, 中古, 现代) 三段**各自独立合成**；状态诚实（`ok`/`text_empty`/
+  `synth_empty`/`tts_unavailable`），绝不伪造音频；未知 `middle_system` 显式抛 `KeyError`。
+- `robot/app.py` `_gen_worker`：三段音频 → **四段**（新增 `reply_mc`，默认王力体系，
+  `synthesize_ancient(system_id=...)`）；payload `audios` 新增 `system`/`system_label`/
+  `ipa`/`coverage`/`unknown`；`_PHASE_LABEL`/`_PROGRESS` 同步。
+- 结果面板新增「三时期对照 · 同一回答」三列（东汉 / 中古 / 现代）：各带独立播放 +
+  下载；古韵两列显示 IPA + 覆盖% + 缺字；现代汉语断网显示诚实说明；
+  无应答轮次也渲染该节（显示词典未命中说明，不生成对照）。
+- 现代汉语段只做真 Edge TTS，断网则该段为空并说明——**不做本地共振峰兜底**（项目契约）。
+- 测试：`EraComparisonTests` 3 项（同句「天子」东汉 tʰen vs 王力中古 tʰien、
+  现代双分支、text_empty、未知体系 KeyError）+ `WorkerFourAudioTests` 2 项
+  （四段 payload / 无应答诚实为空，LLM/TTS/声卡全打桩）；
+  `run_feat_tests.py` 110 项全绿，robot app 冒烟 3 项全绿。
+
+### 下一阶段（第四阶段余下，用户已定顺序）
+
+- ✅ ① 一句话多时期音频对照（东汉 / 中古 / 现代同句三版）——已完成；
+- ② 翻译层词典未命中时接 LLM（宁可不答不编造，标注 dict vs LLM）；
+- ③ 多音字按词切分选音；
 - Jetson 真机链路回归清单（见 v5-goal.md 第五阶段）。
 
 ## 四、已验证可用的能力（2026-10-30 实测）
@@ -140,6 +159,7 @@ $env:PYTHONUTF8 = "1"; $env:PYTHONIOENCODING = "utf-8"
 | 东汉→中古音类对应表 | ✅ 493/703 锚定，526 对，30 母/58 韵粒度，`scripts/correspondence_report.py` |
 | 古韵合成 eSpeak | ✅ 32540 采样点 / 1.48s |
 | Edge TTS 现代朗读 | ✅ MP3 |
+| 三时期音频对照（东汉 / 中古王力 / 现代） | ✅ `language/era_audio.py`，robot 面板三列 |
 | 切韵对照（Qieyun） | ✅（依赖坑 2 的 networkx 补丁） |
 | 录音 + 回放 | ✅ selftest True |
 | 语音识别 | ✅ SenseVoice 逐字正确；Vosk 兜底可用 |

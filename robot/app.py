@@ -112,6 +112,7 @@ from services.asr_client import (available_backends as asr_available_backends,
                                  BACKEND_LABELS as _ASR_LABELS)
 from services import tts_client
 from language.ancient_tts import text_to_ipa, synthesize_ancient
+from language.era_audio import MIDDLE_SYSTEM_DEFAULT, middle_system_label
 from phonology_db import lookup_char, EASTERN_HAN_DB
 
 OUT_DIR = os.path.join(ROOT, "audio_out")
@@ -305,6 +306,7 @@ def _gen_worker(job, session, cfg):
         reply = (gen.get("reply") or "").strip()
         reply_modern = (gen.get("reply_modern") or "").strip() if reply else ""
         source = gen.get("source", "local")
+        middle_system = cfg.get("middle_system") or MIDDLE_SYSTEM_DEFAULT
 
         # 词典无匹配时，不创建虚构回答；只合成输入内容的古汉语翻译。
         user_text = translation or cfg["text"]
@@ -317,18 +319,25 @@ def _gen_worker(job, session, cfg):
             return "reply_anc", synthesize_ancient(
                 reply, pitch=cfg["pitch"], speed=cfg["speed"])
 
+        def _do_reply_mc():
+            # 中古音（默认王力体系）回答音频：与东汉/现代做三时期对照
+            return "reply_mc", synthesize_ancient(
+                reply, pitch=cfg["pitch"], speed=cfg["speed"],
+                system_id=middle_system)
+
         def _do_reply_mod():
             # 现代汉语只做真 Edge TTS（断网则该段为空），绝不共振峰兜底
             return "reply_mod", tts_client.speak_natural(
                 reply_modern, voice=cfg["voice"], rate=cfg["rate"])
 
-        # 有应答时生成三段音频；无词典匹配时只生成输入翻译的古汉语音频。
+        # 有应答时生成四段音频；无词典匹配时只生成输入翻译的古汉语音频。
         job["phase"] = "synth"
         done = {"user": (b"", None), "reply_anc": (b"", None),
-                "reply_mod": (b"", None)}
+                "reply_mc": (b"", None), "reply_mod": (b"", None)}
         tasks = [_do_user]
         if reply:
             tasks.append(_do_reply_anc)
+            tasks.append(_do_reply_mc)
         if reply and reply_modern:
             tasks.append(_do_reply_mod)
         import concurrent.futures
@@ -336,14 +345,15 @@ def _gen_worker(job, session, cfg):
             futs = [ex.submit(task) for task in tasks]
             for fut in concurrent.futures.as_completed(futs):
                 key, val = fut.result()
-                if key in ("user", "reply_anc"):
+                if key in ("user", "reply_anc", "reply_mc"):
                     wav, result = val
                     done[key] = (wav, result)
                 else:
                     done["reply_mod"] = (val or b"", None)
                 job["phase"] = f"synth_{key}"
-        (wav_u, _), (wav_r, result_r), (mp3_m, _) = (
-            done["user"], done["reply_anc"], done["reply_mod"])
+        (wav_u, _), (wav_r, result_r), (wav_mc, result_mc), (mp3_m, _) = (
+            done["user"], done["reply_anc"], done["reply_mc"],
+            done["reply_mod"])
         if reply and not wav_r:
             source = f"{source}+ancient_fallback"
 
@@ -359,6 +369,17 @@ def _gen_worker(job, session, cfg):
             "audios": {
                 "user": {"data": wav_u, "kind": "wav", "text": user_text},
                 "reply_anc": {"data": wav_r, "kind": "wav", "text": reply},
+                "reply_mc": {
+                    "data": wav_mc, "kind": "wav", "text": reply,
+                    "system": middle_system,
+                    "system_label": middle_system_label(middle_system),
+                    "ipa": result_mc.ipa_text if result_mc and wav_mc else "",
+                    "coverage": result_mc.coverage_pct
+                    if result_mc and wav_mc else 0.0,
+                    "approx": result_mc.approx if result_mc and wav_mc else 0,
+                    "unknown": list(result_mc.unknown)
+                    if result_mc else [],
+                },
                 "reply_mod": {"data": mp3_m, "kind": "mp3",
                               "text": reply_modern},
             },
@@ -958,6 +979,7 @@ with col2:
         "synth": "合成语音…",
         "synth_user": "合成语音中 · 我的话…",
         "synth_reply_anc": "合成语音中 · 古韵回答…",
+        "synth_reply_mc": "合成语音中 · 中古回答…",
         "synth_reply_mod": "合成语音中 · 现代回答…",
         "play": "准备朗读…",
     }
@@ -978,6 +1000,7 @@ with col2:
                 # 阶段 → 进度：构思→合成→朗读，给个可见的推进感
                 _PROGRESS = {"start": 0.06, "qwen": 0.30, "synth": 0.55,
                              "synth_user": 0.66, "synth_reply_anc": 0.80,
+                             "synth_reply_mc": 0.88,
                              "synth_reply_mod": 0.92, "play": 0.97}
                 pct = int(_PROGRESS.get(job["phase"], 0.05) * 100)
                 echo_html = (f'<div class="gi-loading-echo">{user}</div>'
@@ -1117,6 +1140,56 @@ with col2:
                 st.download_button("下载", item["data"], file_name=fname,
                                    mime=fmt, use_container_width=True,
                                    key=f"dl_{key}")
+
+        # 三时期对照：同一回答三版音频（东汉 / 中古 / 现代），各自独立合成
+        st.markdown('<div class="gi-h">三时期对照 · 同一回答</div>',
+                    unsafe_allow_html=True)
+        if not res.get("reply"):
+            st.caption("本轮没有应答（词典未命中）——不生成对照；"
+                       "输入翻译的东汉古韵见上方「语音」。")
+        else:
+            _mc_item = audios.get("reply_mc") or {}
+            _era_cols = st.columns(3, gap="small")
+            _r_anc = text_to_ipa(res["reply"])   # 仅查表，与 worker 同源
+            _era_specs = (
+                (_era_cols[0], "reply_anc", "东汉（洛阳官音拟音）",
+                 _r_anc.ipa_text, _r_anc.coverage_pct,
+                 list(_r_anc.unknown),
+                 "合成失败（无有效汉字？）"),
+                (_era_cols[1], "reply_mc",
+                 f"中古（{_mc_item.get('system_label') or '王力系统'}）",
+                 _mc_item.get("ipa", ""), _mc_item.get("coverage", 0.0),
+                 _mc_item.get("unknown") or [],
+                 "合成失败（无有效汉字？）"),
+                (_era_cols[2], "reply_mod", "现代汉语",
+                 None, None, None,
+                 "网络不可用，未生成（现代汉语不做本地兜底合成）"),
+            )
+            for _col, _era_key, _era_title, _ipa, _cov, _unk, _off in \
+                    _era_specs:
+                with _col:
+                    _item = audios.get(_era_key) or {}
+                    _data = _item.get("data") or b""
+                    st.caption(_era_title)
+                    if not _data:
+                        st.caption(_off)
+                        continue
+                    _fmt = "audio/wav" if _item.get("kind") == "wav" \
+                        else "audio/mpeg"
+                    st.audio(_data, format=_fmt)
+                    if _ipa is not None:
+                        _line = f"IPA：{_ipa} · 覆盖 {_cov}%"
+                        if _unk:
+                            _line += " · 缺字：" + " ".join(_unk)
+                        st.caption(_line)
+                    elif _era_key == "reply_mod":
+                        st.caption("（以白话文本朗读）")
+                    st.download_button(
+                        "下载", _data,
+                        file_name=(f"guyun_era_{_era_key}_"
+                                   f"{int(res['ms'])}.{_item.get('kind', 'wav')}"),
+                        mime=_fmt, use_container_width=True,
+                        key=f"dl_era_{_era_key}")
 
         # 东汉 IPA（古韵模式）
         if res["mode"] == "ancient" and res.get("reply"):
