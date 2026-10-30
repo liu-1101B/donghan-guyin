@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>按住说话</title>
+<style>
+  :root{
+    --paper:#f5f2ea; --card:#fffefb; --line:#e4dccb;
+    --ink:#26221a; --ink2:#5c5546; --ink3:#9a917e; --seal:#a63d2a;
+  }
+  html,body{margin:0;padding:0;background:transparent;}
+  body{font-family:-apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;}
+  #btn{
+    width:100%;box-sizing:border-box;display:flex;align-items:center;justify-content:center;
+    gap:.55rem;border:1px solid var(--line);background:var(--card);color:var(--ink);
+    border-radius:8px;padding:.52rem 1rem;font-size:.95rem;letter-spacing:.12em;
+    cursor:pointer;user-select:none;-webkit-user-select:none;touch-action:none;
+    transition:background .12s ease,border-color .12s ease,color .12s ease;
+    font-family:inherit;
+  }
+  #btn:hover{border-color:var(--ink2);}
+  #btn:focus{outline:none;border-color:var(--ink2);}
+  #btn.rec{background:var(--seal);border-color:var(--seal);color:#fff;}
+  #btn.wait{opacity:.6;cursor:progress;}
+  #dot{width:.5rem;height:.5rem;border-radius:50%;background:currentColor;opacity:.4;flex:none;}
+  #btn.rec #dot{opacity:1;animation:pulse 1s ease-in-out infinite;}
+  @keyframes pulse{50%{opacity:.2;}}
+  #sec{font-variant-numeric:tabular-nums;font-size:.85rem;letter-spacing:0;}
+  #hint{margin-top:.4rem;font-size:.74rem;color:var(--ink3);letter-spacing:.06em;
+        text-align:center;min-height:1rem;line-height:1.2rem;}
+  #hint.err{color:var(--seal);}
+</style>
+</head>
+<body>
+  <button id="btn" type="button" aria-label="按住说话"><span id="dot"></span><span id="label">按住说话</span><span id="sec" style="display:none"></span></button>
+  <div id="hint">按住按钮说话，松开发送（松开后自动识别）</div>
+<script>
+(function () {
+  "use strict";
+  var btn = document.getElementById("btn");
+  var label = document.getElementById("label");
+  var sec = document.getElementById("sec");
+  var hint = document.getElementById("hint");
+
+  // ---- Streamlit 组件协议（postMessage，无需构建工具）----
+  var Streamlit = {
+    ready: function () {
+      window.parent.postMessage(
+        {isStreamlitMessage: true, type: "streamlit:componentReady", apiVersion: 1}, "*");
+    },
+    height: function (h) {
+      window.parent.postMessage(
+        {isStreamlitMessage: true, type: "streamlit:setFrameHeight", height: h}, "*");
+    },
+    value: function (v) {
+      window.parent.postMessage(
+        {isStreamlitMessage: true, type: "streamlit:setComponentValue", value: v, dataType: "json"}, "*");
+    }
+  };
+
+  var ctx = null, stream = null, source = null, node = null;
+  var chunks = [], recording = false, startedAt = 0, timer = null, watchdog = null;
+  var MAX_SECONDS = 30;   // 兜底：任何时候卡住都不会超过这个时长
+
+  function setHint(text, isError) {
+    hint.textContent = text;
+    hint.className = isError ? "err" : "";
+    Streamlit.height(64);
+  }
+
+  function resetButton() {
+    btn.classList.remove("rec", "wait");
+    label.textContent = "按住说话";
+    sec.style.display = "none";
+    sec.textContent = "";
+  }
+
+  function start() {
+    // 上一次还停在「识别中…」时也允许再按——否则一旦状态没回来，
+    // 按钮就永久失效（实测的毛病）。
+    if (recording) return;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setHint("这个浏览器不支持录音，请用 Chrome / Edge，并通过 http://localhost 打开", true);
+      return;
+    }
+    chunks = [];
+    recording = true;
+    startedAt = (window.performance || Date).now();
+    btn.classList.remove("wait");
+    btn.classList.add("rec");
+    label.textContent = "松开发送";
+    sec.style.display = "inline";
+    sec.textContent = "0.0s";
+    timer = setInterval(function () {
+      sec.textContent = ((((window.performance || Date).now()) - startedAt) / 1000).toFixed(1) + "s";
+    }, 100);
+    // 卡住兜底：到点强制收尾并发出去，不会一直录下去
+    watchdog = setTimeout(function () {
+      if (recording) { setHint("超过 " + MAX_SECONDS + " 秒，自动停止并发送"); stop(); }
+    }, MAX_SECONDS * 1000);
+    setHint("正在录音…");
+
+    navigator.mediaDevices.getUserMedia({
+      audio: {channelCount: 1, echoCancellation: true, noiseSuppression: true}
+    }).then(function (s) {
+      if (!recording) { s.getTracks().forEach(function (t) { t.stop(); }); return; }
+      stream = s;
+      var AC = window.AudioContext || window.webkitAudioContext;
+      ctx = new AC();
+      source = ctx.createMediaStreamSource(stream);
+      node = ctx.createScriptProcessor(4096, 1, 1);
+      node.onaudioprocess = function (ev) {
+        if (!recording) return;
+        chunks.push(new Float32Array(ev.inputBuffer.getChannelData(0)));
+      };
+      source.connect(node);
+      node.connect(ctx.destination);   // 某些浏览器不接 destination 不回调
+    }).catch(function (err) {
+      recording = false;
+      clearInterval(timer);
+      resetButton();
+      var name = (err && err.name) || "Error";
+      if (name === "NotAllowedError") {
+        setHint("麦克风权限被拒绝：点地址栏的相机/麦克风图标允许后重试", true);
+      } else if (name === "NotFoundError") {
+        setHint("没找到麦克风设备", true);
+      } else {
+        setHint("无法录音（" + name + "）：请用 http://localhost 打开本页", true);
+      }
+    });
+  }
+
+  function wavFrom(chunks, sampleRate) {
+    var total = 0, i, j;
+    for (i = 0; i < chunks.length; i++) total += chunks[i].length;
+    var buffer = new ArrayBuffer(44 + total * 2);
+    var view = new DataView(buffer);
+    function writeString(offset, text) {
+      for (var k = 0; k < text.length; k++) view.setUint8(offset + k, text.charCodeAt(k));
+    }
+    writeString(0, "RIFF");
+    view.setUint32(4, 36 + total * 2, true);
+    writeString(8, "WAVE");
+    writeString(12, "fmt ");
+    view.setUint32(16, 16, true);      // PCM 头长度
+    view.setUint16(20, 1, true);       // PCM
+    view.setUint16(22, 1, true);       // 单声道
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    writeString(36, "data");
+    view.setUint32(40, total * 2, true);
+    var offset = 44;
+    for (i = 0; i < chunks.length; i++) {
+      var c = chunks[i];
+      for (j = 0; j < c.length; j++) {
+        var s = Math.max(-1, Math.min(1, c[j]));
+        view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+        offset += 2;
+      }
+    }
+    return buffer;
+  }
+
+  function toBase64(buffer) {
+    var bytes = new Uint8Array(buffer), binary = "", step = 0x8000, i;
+    for (i = 0; i < bytes.length; i += step) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + step));
+    }
+    return window.btoa(binary);
+  }
+
+  function stop() {
+    if (!recording) return;
+    recording = false;
+    clearInterval(timer);
+    clearTimeout(watchdog);
+    var elapsed = (((window.performance || Date).now()) - startedAt) / 1000;
+    var sampleRate = ctx ? Math.round(ctx.sampleRate) : 48000;
+    var captured = chunks.slice();
+    chunks = [];
+
+    try { if (node) { node.disconnect(); node.onaudioprocess = null; } } catch (e) {}
+    try { if (source) source.disconnect(); } catch (e) {}
+    if (stream) stream.getTracks().forEach(function (t) { t.stop(); });
+    if (ctx) { try { ctx.close(); } catch (e) {} }
+    ctx = stream = source = node = null;
+
+    resetButton();
+    if (elapsed < 0.35 || captured.length === 0) {
+      setHint("太短了，再按住说一句", true);
+      return;
+    }
+    var wav = wavFrom(captured, sampleRate);
+    if (wav.byteLength < 4000) {
+      setHint("没收到声音，检查一下麦克风", true);
+      return;
+    }
+    // 发出去之后立刻把按钮复位：不要停在「识别中…」——
+    // 实测那样会被当成"按钮坏了/一直没结果"
+    label.textContent = "按住说话";
+    btn.classList.remove("wait");
+    setHint("已录 " + elapsed.toFixed(1) + " 秒，正在识别…（可以再按住说一次）");
+    Streamlit.value({
+      wav: toBase64(wav),
+      sample_rate: sampleRate,
+      duration_ms: Math.round(elapsed * 1000),
+      nonce: Date.now() + "-" + Math.random().toString(36).slice(2, 8)
+    });
+  }
+
+  btn.addEventListener("pointerdown", function (ev) {
+    ev.preventDefault();
+    try { btn.setPointerCapture(ev.pointerId); } catch (e) {}
+    start();
+  });
+  // 松手事件绑在 document/window 上并兜住 blur：
+  // 指针在 iframe 外面抬起时，iframe 收不到 pointerup，会一直卡在录音态
+  // （第一次能用、之后一直没反应，就是这个原因）。
+  document.addEventListener("pointerup", stop);
+  document.addEventListener("pointercancel", stop);
+  window.addEventListener("blur", stop);
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "hidden") stop();
+  });
+  // 键盘可达性：空格按下/松开等同按住/松开
+  btn.addEventListener("keydown", function (ev) {
+    if (ev.key === " " || ev.key === "Enter") { ev.preventDefault(); start(); }
+  });
+  btn.addEventListener("keyup", function (ev) {
+    if (ev.key === " " || ev.key === "Enter") { ev.preventDefault(); stop(); }
+  });
+
+  Streamlit.ready();
+  Streamlit.height(64);
+})();
+</script>
+</body>
+</html>

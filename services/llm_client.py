@@ -1,17 +1,17 @@
 """
 services/llm_client.py
-文言文翻译与回答服务
+文言文翻译与回答服务。
 
-generate_turn(text, history) -> {"translation": ..., "reply": ...}
-
-优先级：
-1. 本地 llama-server（默认 http://127.0.0.1:8080，Qwen3-30B-A3B，无需密钥）
-2. 配置 LLM_API_KEY 时回退到云端 OpenAI 兼容接口
-3. 都不可用时本地规则回退（词典翻译 + 固定文言应答）
+仅有两条路径：
+- 配置 LLM_API_KEY / OPENAI_API_KEY：调用 LLM_BASE_URL 指定的大模型 API；
+- 未配置密钥：不访问任何模型服务，只使用本地词典和预设应答。
+本地词典未命中时 reply 为空，交由调用方只播放用户输入的古汉语翻译。
 """
+import ipaddress
 import json
 import os
 import re
+from urllib.parse import urlparse
 
 import httpx
 
@@ -32,14 +32,36 @@ except ImportError:
     def _to_simplified(text: str) -> str:
         return text
 
-# 本地优先：llama-server (llama.cpp) OpenAI 兼容接口
-LOCAL_BASE = os.environ.get("LOCAL_LLM_BASE", "http://127.0.0.1:8080/v1")
-LOCAL_MODEL = os.environ.get("LOCAL_LLM_MODEL", "")  # 空 = 用服务端的默认模型
+def _safe_log(message: str) -> None:
+    """Logging must never break dictionary fallback on legacy Windows consoles."""
+    try:
+        print(message)
+    except UnicodeEncodeError:
+        try:
+            print(message.encode("ascii", "backslashreplace").decode("ascii"))
+        except Exception:
+            pass
 
-# 云端可选
-LLM_BASE = os.environ.get("LLM_BASE_URL", "https://api.openai.com/v1")
+
+# 可选的大模型 API：填写密钥时调用所配置的 OpenAI 兼容接口；
+# 密钥为空时完全不尝试本地/远程模型，直接使用本地词典应答。
+LLM_BASE = os.environ.get("LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/")
 LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-4o-mini")
 API_KEY = os.environ.get("LLM_API_KEY", "") or os.environ.get("OPENAI_API_KEY", "")
+
+
+def refresh_credentials() -> dict:
+    """Re-read the three settings from the environment.
+
+    The web UI writes them into .env and updates os.environ, then calls this;
+    module-level constants are captured at import time, so without it a key
+    typed into the page would only take effect after restarting the process.
+    """
+    global LLM_BASE, LLM_MODEL, API_KEY
+    LLM_BASE = os.environ.get("LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+    LLM_MODEL = os.environ.get("LLM_MODEL", "gpt-4o-mini")
+    API_KEY = os.environ.get("LLM_API_KEY", "") or os.environ.get("OPENAI_API_KEY", "")
+    return {"base": LLM_BASE, "model": LLM_MODEL, "has_key": bool(API_KEY)}
 
 # 本地回退用的固定应答语料（常见意图 → (文言应答, 白话应答)）
 _LOCAL_REPLIES = [
@@ -85,15 +107,22 @@ _DEFAULT_REPLY_MODERN = "说得好。你的话我听到了，想听听更多。"
 
 
 def _local_fallback(text: str):
-    """规则回退：词典翻译 + 意图匹配应答（含白话版）"""
+    """无 API 时只使用本地词典/预设应答；没有命中就不编造回答。"""
     translation = simple_translate(text)
-    reply, reply_modern = _DEFAULT_REPLY, _DEFAULT_REPLY_MODERN
     for keys, canned, modern in _LOCAL_REPLIES:
         if any(k in text for k in keys):
-            reply, reply_modern = canned, modern
-            break
-    return {"translation": translation, "reply": reply,
-            "reply_modern": reply_modern}
+            return {
+                "translation": translation,
+                "reply": canned,
+                "reply_modern": modern,
+                "source": "local-dictionary",
+            }
+    return {
+        "translation": translation,
+        "reply": "",
+        "reply_modern": "",
+        "source": "local-dictionary-miss",
+    }
 
 
 def _extract_json(raw: str, original_text: str) -> dict:
@@ -127,7 +156,24 @@ def _build_messages(text: str, history):
     return msgs
 
 
-def _call_chat(base: str, model: str, text: str, history, key=""):
+def _trust_env_for_endpoint(base: str) -> bool:
+    """Do not route loopback/private-LAN model traffic through public proxies."""
+    host = (urlparse(base).hostname or "").strip("[]").lower()
+    if not host:
+        return True
+    if host == "localhost" or host.endswith(".localhost"):
+        return False
+    try:
+        address = ipaddress.ip_address(host)
+        if address.is_loopback or address.is_private or address.is_link_local:
+            return False
+    except ValueError:
+        # Hostnames such as jetson.local can opt out through standard NO_PROXY.
+        pass
+    return True
+
+
+def _call_chat(base: str, model: str, text: str, history, key="", timeout=120.0):
     headers = {"Content-Type": "application/json"}
     if key:
         headers["Authorization"] = f"Bearer {key}"
@@ -135,35 +181,42 @@ def _call_chat(base: str, model: str, text: str, history, key=""):
                "temperature": 0.7, "max_tokens": 300}
     if model:
         payload["model"] = model
-    # 本机服务不走代理（环境里的 ALL_PROXY 指向不稳定的本地代理）
-    trust_env = "127.0.0.1" not in base and "localhost" not in base
+    # Local/LAN inference should not accidentally go via the user's public proxy.
+    trust_env = _trust_env_for_endpoint(base)
+    # 限制连接阶段等待时间；模型生成本身仍可使用较长读取超时。
+    timeout_cfg = httpx.Timeout(timeout, connect=min(5.0, timeout))
     r = httpx.post(f"{base}/chat/completions", headers=headers,
-                   json=payload, timeout=120.0, trust_env=trust_env)
+                   json=payload, timeout=timeout_cfg, trust_env=trust_env)
     r.raise_for_status()
     content = r.json()["choices"][0]["message"]["content"]
     return _extract_json(content, text)
 
 
-def generate_turn(text: str, history=None) -> dict:
-    """单轮对话统一入口：本地 Qwen3 → 云端 → 规则回退"""
+def generate_turn(text: str, history=None, mode: str = None) -> dict:
+    """两条明确路线：mode='api' 用大模型；mode='dictionary' 只查本地词典。
+
+    mode=None 时供命令行调用：已配置密钥则用 API，否则用词典。
+    API 调用失败会回退词典；词典未命中时 reply/reply_modern 均为空，
+    上层必须只播放 translation 的古汉语音频，不得补造默认回答。
+    """
+    selected = (mode or ("api" if API_KEY else "dictionary")).strip().lower()
+    if selected not in {"api", "dictionary"}:
+        selected = "dictionary"
+
     out = None
-    # 1) 本地 llama-server
-    try:
-        out = _call_chat(LOCAL_BASE, LOCAL_MODEL, text, history)
-        out["source"] = "local-qwen"
-    except Exception as e:
-        print(f"[llm] 本地 LLM 不可用: {e.__class__.__name__}")
-    # 2) 云端（需 key）
-    if out is None and API_KEY:
-        try:
-            out = _call_chat(LLM_BASE, LLM_MODEL, text, history, key=API_KEY)
-            out["source"] = "cloud"
-        except Exception as e:
-            print(f"[llm] 云端调用失败: {e.__class__.__name__}")
-    # 3) 规则回退
+    if selected == "api":
+        if not API_KEY:
+            _safe_log("[llm] 当前选择大模型 API 模式，但未配置 LLM_API_KEY；改用本地词典")
+        else:
+            try:
+                out = _call_chat(LLM_BASE, LLM_MODEL, text, history,
+                                 key=API_KEY, timeout=60.0)
+                out["source"] = "cloud"
+            except Exception as e:
+                _safe_log(f"[llm] 云端 API 调用失败，改用本地词典：{e.__class__.__name__}")
+
     if out is None:
         out = _local_fallback(text)
-        out["source"] = "local-rules"
     # 繁体 → 简体（古韵库字表为简体）
     out["translation"] = _to_simplified(out.get("translation", ""))
     out["reply"] = _to_simplified(out["reply"])

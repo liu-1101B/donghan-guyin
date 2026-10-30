@@ -20,6 +20,7 @@ import sys
 import time
 import base64
 import threading
+import json
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -38,7 +39,8 @@ _RELOAD_ORDER = [
     "language.style_prompt", "language.ancient_tts",
     "services.llm_client", "services.tts_client", "services.asr_client",
     "language.turn_engine",
-    "robot.session", "robot.voice_router", "robot.audio_io",
+    "robot.session", "robot.voice_router", "robot.windows_audio",
+    "robot.audio_io", "robot.recorder",
 ]
 
 
@@ -105,12 +107,181 @@ from robot.session import Session
 from robot.voice_router import VoiceRouter
 from robot.audio_io import (AudioIO, bt_status, BT_MAC, _list_pw_sinks,
                             ensure_audible)
+from robot.recorder import hold_to_record, decode_wav
+from services.asr_client import (available_backends as asr_available_backends,
+                                 BACKEND_LABELS as _ASR_LABELS)
 from services import tts_client
 from language.ancient_tts import text_to_ipa, synthesize_ancient
 from phonology_db import lookup_char, EASTERN_HAN_DB
 
 OUT_DIR = os.path.join(ROOT, "audio_out")
 os.makedirs(OUT_DIR, exist_ok=True)
+PREFERENCES_FILE = os.path.join(ROOT, ".robot_preferences.json")
+LLM_MODE_LABELS = {
+    "api": "大模型 API（高质量回答）",
+    "dictionary": "本地词典（简单回复）",
+}
+
+
+def _load_robot_preferences():
+    try:
+        with open(PREFERENCES_FILE, encoding="utf-8") as handle:
+            data = json.load(handle)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError, TypeError):
+        return {}
+
+
+def _save_robot_preferences(preferences):
+    """Persist per-device UI preferences atomically, without storing secrets."""
+    temp_path = PREFERENCES_FILE + ".tmp"
+    try:
+        with open(temp_path, "w", encoding="utf-8") as handle:
+            json.dump(preferences, handle, ensure_ascii=False, indent=2)
+        os.replace(temp_path, PREFERENCES_FILE)
+        return True
+    except OSError as exc:
+        print(f"[ui] 无法保存用户设置：{exc.__class__.__name__}")
+        try:
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+        except OSError:
+            pass
+        return False
+
+
+def _persist_llm_mode():
+    mode = st.session_state.get("llm_mode", "dictionary")
+    if mode not in LLM_MODE_LABELS:
+        mode = "dictionary"
+    preferences = _load_robot_preferences()
+    preferences["llm_mode"] = mode
+    _save_robot_preferences(preferences)
+
+
+# ---------- .env 读写（界面里直接填 API，不用去改文件） ----------
+ENV_FILE = os.path.join(ROOT, ".env")
+_ENV_KEYS = ("LLM_BASE_URL", "LLM_MODEL", "LLM_API_KEY")
+_DEFAULT_BASE = "https://api.openai.com/v1"
+_DEFAULT_MODEL = "gpt-4o-mini"
+
+
+def _read_env_file():
+    values = {}
+    try:
+        with open(ENV_FILE, encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                values[key.strip()] = value.strip()
+    except OSError:
+        pass
+    return values
+
+
+def _write_env_values(updates):
+    """只改这三个键；注释和其他键原样保留，写临时文件再原子替换。"""
+    try:
+        with open(ENV_FILE, encoding="utf-8") as handle:
+            lines = handle.read().splitlines()
+    except OSError:
+        lines = [
+            "# 大模型 API 设置（由界面写入；此文件已在 .gitignore 中，不要提交）",
+        ]
+    out, seen = [], set()
+    for line in lines:
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#") and "=" in stripped:
+            key = stripped.split("=", 1)[0].strip()
+            if key in updates:
+                out.append(f"{key}={updates[key]}")
+                seen.add(key)
+                continue
+        out.append(line)
+    for key, value in updates.items():
+        if key not in seen:
+            if out and out[-1].strip():
+                out.append("")
+            out.append(f"{key}={value}")
+    tmp = ENV_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as handle:
+        handle.write("\n".join(out).rstrip() + "\n")
+    os.replace(tmp, ENV_FILE)
+    for key, value in updates.items():
+        os.environ[key] = value
+    try:
+        from services import llm_client
+        llm_client.refresh_credentials()      # 立即生效，不必重启
+    except Exception:
+        pass
+
+
+def _current_llm_settings():
+    env = _read_env_file()
+    key = (os.environ.get("LLM_API_KEY") or os.environ.get("OPENAI_API_KEY")
+           or env.get("LLM_API_KEY") or "")
+    return {
+        "base": os.environ.get("LLM_BASE_URL") or env.get("LLM_BASE_URL") or _DEFAULT_BASE,
+        "model": os.environ.get("LLM_MODEL") or env.get("LLM_MODEL") or _DEFAULT_MODEL,
+        "key": key,
+    }
+
+
+def _mask_key(key):
+    if not key:
+        return "未配置"
+    return f"已配置（末四位 {key[-4:]}）" if len(key) >= 8 else "已配置（密钥太短？）"
+
+
+def _input_key():
+    """输入框的 key 带版本号（见 _set_input）。"""
+    return f"robot_input_v{st.session_state.get('_input_ver', 0)}"
+
+
+def _set_input(text):
+    """把文字放进输入框。
+
+    不能直接写 st.session_state["robot_input"]：用户一旦在页面上编辑过这个
+    输入框（比如删掉旧内容），客户端会把自己的值回传，覆盖掉服务端的赋值 →
+    录音识别结果就"写不进去"（实测：第一次能用，删一次内容之后再也不回填）。
+    换一个新 key 等价于换一个新控件，值必然生效。
+    """
+    st.session_state["_input_ver"] = int(st.session_state.get("_input_ver", 0)) + 1
+    st.session_state[_input_key()] = text
+
+
+def asr_backend_label(name):
+    return _ASR_LABELS.get(name, name)
+
+
+def _wav_levels(path):
+    """返回 (峰值 dBFS, 均方根 dBFS)。
+
+    用来把「麦克风根本没声音」和「有声音但没识别对」分开——否则两种情况
+    在界面上都是"没反应"，只能靠猜。
+    """
+    import math
+    import wave as _wave
+
+    import numpy as _np
+
+    try:
+        with _wave.open(path, "rb") as wf:
+            width = wf.getsampwidth()
+            frames = wf.readframes(wf.getnframes())
+    except Exception:
+        return -120.0, -120.0
+    if width != 2 or not frames:
+        return -120.0, -120.0
+    data = _np.frombuffer(frames, dtype="<i2").astype("float32") / 32768.0
+    if data.size == 0:
+        return -120.0, -120.0
+    peak = float(_np.max(_np.abs(data)))
+    rms = float(_np.sqrt(_np.mean(_np.square(data))))
+    db = lambda v: 20.0 * math.log10(v) if v > 1e-6 else -120.0
+    return db(peak), db(rms)
 
 
 # ---------- 后台生成（线程内不碰 Streamlit API，状态写 job 字典） ----------
@@ -127,12 +298,15 @@ def _gen_worker(job, session, cfg):
     from services import llm_client
     try:
         job["phase"] = "qwen"
-        gen = llm_client.generate_turn(cfg["text"], session.history())
+        gen = llm_client.generate_turn(
+            cfg["text"], session.history(), mode=cfg.get("llm_mode")
+        )
         translation = (gen.get("translation") or "").strip()
-        reply = (gen.get("reply") or "").strip() or "善。"
-        reply_modern = (gen.get("reply_modern") or "").strip() or reply
+        reply = (gen.get("reply") or "").strip()
+        reply_modern = (gen.get("reply_modern") or "").strip() if reply else ""
         source = gen.get("source", "local")
 
+        # 词典无匹配时，不创建虚构回答；只合成输入内容的古汉语翻译。
         user_text = translation or cfg["text"]
 
         def _do_user():
@@ -148,26 +322,29 @@ def _gen_worker(job, session, cfg):
             return "reply_mod", tts_client.speak_natural(
                 reply_modern, voice=cfg["voice"], rate=cfg["rate"])
 
-        # 三段并行合成（Orin 12 核，各自独立：formant 吃 CPU、Edge 等网络）
+        # 有应答时生成三段音频；无词典匹配时只生成输入翻译的古汉语音频。
         job["phase"] = "synth"
         done = {"user": (b"", None), "reply_anc": (b"", None),
                 "reply_mod": (b"", None)}
+        tasks = [_do_user]
+        if reply:
+            tasks.append(_do_reply_anc)
+        if reply and reply_modern:
+            tasks.append(_do_reply_mod)
         import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
-            futs = [ex.submit(f) for f in (_do_user, _do_reply_anc,
-                                           _do_reply_mod)]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(tasks)) as ex:
+            futs = [ex.submit(task) for task in tasks]
             for fut in concurrent.futures.as_completed(futs):
                 key, val = fut.result()
                 if key in ("user", "reply_anc"):
                     wav, result = val
                     done[key] = (wav, result)
-                else:  # reply_mod：直接是 mp3 字节（失败为 None）
+                else:
                     done["reply_mod"] = (val or b"", None)
                 job["phase"] = f"synth_{key}"
         (wav_u, _), (wav_r, result_r), (mp3_m, _) = (
             done["user"], done["reply_anc"], done["reply_mod"])
-        if not wav_r:
-            # 古韵合成失败（极个别文本）→ 标注兜底，不装腔
+        if reply and not wav_r:
             source = f"{source}+ancient_fallback"
 
         job["result"] = ("ok", {
@@ -177,8 +354,8 @@ def _gen_worker(job, session, cfg):
             "reply_modern": reply_modern,
             "source": source,
             "mode": cfg["mode"],
-            "coverage": result_r.coverage_pct if wav_r else 0.0,
-            "approx": result_r.approx if wav_r else 0,
+            "coverage": result_r.coverage_pct if result_r and wav_r else 0.0,
+            "approx": result_r.approx if result_r and wav_r else 0,
             "audios": {
                 "user": {"data": wav_u, "kind": "wav", "text": user_text},
                 "reply_anc": {"data": wav_r, "kind": "wav", "text": reply},
@@ -187,14 +364,16 @@ def _gen_worker(job, session, cfg):
             },
             "ms": time.time(),
         })
-        # 自动朗读：按模式选主段（自然语音→现代段；东汉古韵→古韵段），
-        # 主段缺失时按 古韵回答 → 现代回答 → 我的话 顺序退
+        # 有回答时按语音模式播放回答；词典未命中时只播放输入翻译的古汉语。
         job["phase"] = "play"
         a = job["result"][1]["audios"]
-        pref = a["reply_mod"] if cfg["mode"] == "natural" else a["reply_anc"]
-        main = pref if pref["data"] else next(
-            (x for x in (a["reply_anc"], a["reply_mod"], a["user"])
-             if x["data"]), None)
+        if not reply:
+            main = a["user"]
+        else:
+            pref = a["reply_mod"] if cfg["mode"] == "natural" else a["reply_anc"]
+            main = pref if pref["data"] else next(
+                (x for x in (a["reply_anc"], a["reply_mod"], a["user"])
+                 if x["data"]), None)
         try:
             if main and main["data"]:
                 ai = get_audio_io()
@@ -202,6 +381,9 @@ def _gen_worker(job, session, cfg):
                     _ensure_playable(ai, spinner=False)
                 if job["play_ok"]:
                     ai.play_async(main["data"])
+                    # 记录实际投递目标，供 play_note 如实描述（选了具体设备
+                    # 就不该再写「默认输出设备」）
+                    job["play_target"] = getattr(ai, "playback_target", None)
             else:
                 job["play_ok"] = None
                 job["vol_note"] = None
@@ -356,14 +538,16 @@ st.markdown("""
     @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;600;900&family=Noto+Sans+SC:wght@300;400;500;700&display=swap');
     :root { --paper:#f5f2ea; --card:#fffefb; --line:#e4dccb; --ink:#26221a; --ink2:#5c5546; --ink3:#9a917e; --seal:#a63d2a; }
     html, body, [class*="css"] { font-family:'Noto Sans SC','PingFang SC',sans-serif; }
-    .stApp { background:var(--paper); }
+    /* 底色为宣纸时必须显式给文字上墨色：一旦 Streamlit 跟随系统切到深色主题，
+       它会往 .stApp 注入近白色的字色，浅字压浅底 = 标签全看不清。 */
+    .stApp { background:var(--paper); color:var(--ink); }
     .block-container { max-width:1060px; padding-top:2.4rem; padding-bottom:3rem; }
 
     .gi-title { font-family:'Noto Serif SC',serif; font-weight:900; font-size:2.1rem; color:var(--ink); letter-spacing:0.35em; }
     .gi-title::before { content:''; display:inline-block; width:0.55rem; height:0.55rem; background:var(--seal); margin-right:0.7rem; }
     .gi-sub { color:var(--ink3); font-size:0.85rem; letter-spacing:0.25em; margin:0.3rem 0 2.2rem 0; }
 
-    .gi-h { font-size:0.78rem; color:var(--ink3); letter-spacing:0.22em; margin:1.4rem 0 0.55rem 0; font-weight:500; }
+    .gi-h { font-size:0.78rem; color:var(--ink2); letter-spacing:0.22em; margin:1.4rem 0 0.55rem 0; font-weight:500; }
     .gi-gap { height:1.1rem; }
 
     /* ============ 根治整页变暗 ============
@@ -492,7 +676,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown('<div class="gi-title">古韵</div>', unsafe_allow_html=True)
-st.markdown('<div class="gi-sub">东汉 · 洛阳官音 · QWEN 对谈</div>', unsafe_allow_html=True)
+st.markdown('<div class="gi-sub">东汉 · 洛阳官音 · 文言对谈</div>', unsafe_allow_html=True)
 
 if st.session_state.get("_reload_warn"):
     st.warning(st.session_state._reload_warn)
@@ -505,6 +689,16 @@ if "turns" not in st.session_state:
     st.session_state.turns = []       # [(user, reply, mode_label)]
 if "last_result" not in st.session_state:
     st.session_state.last_result = None
+
+# 首次进入时使用合理默认值并保存；之后始终读取本机上次选择。
+_preferences = _load_robot_preferences()
+if "llm_mode" not in st.session_state:
+    _stored_mode = _preferences.get("llm_mode")
+    if _stored_mode not in LLM_MODE_LABELS:
+        _stored_mode = "api" if (os.environ.get("LLM_API_KEY") or os.environ.get("OPENAI_API_KEY")) else "dictionary"
+        _preferences["llm_mode"] = _stored_mode
+        _save_robot_preferences(_preferences)
+    st.session_state["llm_mode"] = _stored_mode
 
 session = get_session()
 router = get_router()
@@ -519,31 +713,144 @@ col1, col2 = st.columns([5, 7], gap="large")
 
 # ================= 左栏：输入与设置 =================
 with col1:
+    # 录音识别结果在组件回调里落进 _pending_input，这里换成新输入框落地
+    if st.session_state.get("_pending_input"):
+        _pend = st.session_state.pop("_pending_input")
+        print(f"[rec] 回填输入框: {_pend!r}", flush=True)
+        _set_input(_pend)
+
+    st.markdown('<div class="gi-h">对话模式</div>', unsafe_allow_html=True)
+    st.radio(
+        "对话模式",
+        options=["api", "dictionary"],
+        format_func=lambda value: LLM_MODE_LABELS[value],
+        key="llm_mode",
+        on_change=_persist_llm_mode,
+        help="大模型 API：使用你配置的密钥获取高质量回答。\n本地词典：不调用大模型；词典无匹配时只播放输入的古汉语翻译。",
+        label_visibility="collapsed",
+    )
+    _llm_now = _current_llm_settings()
+
+    def _save_api_settings():
+        """button callback：改 .env 与 os.environ。
+
+        两句都不能省：
+        1) 必须在回调里写 session_state["api_key_input"]——在主脚本里写会撞上
+           「widget 已实例化，不能再改它的状态」，异常一抛 st.rerun() 就不执行，
+           页面会一直显示保存前的状态（文件其实已经写好了）。
+        2) 必须在回调里从 session_state 读值，不能靠 on_click 的 args：
+           用户打完字直接点按钮时，args 还是上一次渲染的旧值（实测把密钥吞了）。
+        """
+        base = st.session_state.get("api_base_input", "")
+        model = st.session_state.get("api_model_input", "")
+        key = st.session_state.get("api_key_input", "")
+        updates = {"LLM_BASE_URL": (base or "").strip() or _DEFAULT_BASE,
+                   "LLM_MODEL": (model or "").strip() or _DEFAULT_MODEL}
+        if (key or "").strip():
+            updates["LLM_API_KEY"] = key.strip()
+        try:
+            _write_env_values(updates)
+            st.session_state["_api_notice"] = ("ok", "已写入 .env，立即生效。")
+            st.session_state["api_key_input"] = ""
+        except Exception as exc:
+            st.session_state["_api_notice"] = ("err", f"保存失败：{exc}")
+
+    def _clear_api_key():
+        try:
+            _write_env_values({"LLM_API_KEY": ""})
+            st.session_state["_api_notice"] = ("ok", "已清除密钥，会自动退回本地词典。")
+        except Exception as exc:
+            st.session_state["_api_notice"] = ("err", f"清除失败：{exc}")
+
+    _notice = st.session_state.pop("_api_notice", None)
+    if _notice:
+        (st.success if _notice[0] == "ok" else st.error)(_notice[1])
+    if st.session_state["llm_mode"] == "api" and not _llm_now["key"]:
+        st.warning("当前选择了大模型 API，但还没有密钥。在下面「大模型 API 设置」里填写即可，"
+                   "不用改文件；未配置时暂时使用本地词典。")
+    with st.expander("大模型 API 设置", expanded=(
+        st.session_state["llm_mode"] == "api" and not _llm_now["key"]
+    )):
+        st.caption(f"当前：{_mask_key(_llm_now['key'])}｜{_llm_now['model']}｜{_llm_now['base']}")
+        _base_in = st.text_input("接口地址", value=_llm_now["base"],
+                                 key="api_base_input",
+                                 help="OpenAI 兼容的 /v1 地址，例如 https://api.deepseek.com/v1")
+        _model_in = st.text_input("模型名", value=_llm_now["model"],
+                                  key="api_model_input",
+                                  help="例如 deepseek-chat、gpt-4o-mini、qwen-plus")
+        _key_in = st.text_input("密钥", value="", type="password",
+                                key="api_key_input",
+                                placeholder="粘贴你的 API Key（留空 = 不修改当前密钥）",
+                                help="只写进本机 .env，不会提交到 Git")
+        _c1, _c2 = st.columns(2)
+        _c1.button("保存", use_container_width=True, key="api_save_btn",
+                   on_click=_save_api_settings,
+                   help="写入 .env 并立即生效")
+        _c2.button("清除密钥", use_container_width=True, key="api_clear_btn",
+                   on_click=_clear_api_key)
     st.markdown('<div class="gi-h">输入</div>', unsafe_allow_html=True)
     st.text_area("输入", placeholder="说点什么，白话或文言都可以…",
-                 height=120, key="robot_input", label_visibility="collapsed")
+                 height=120, key=_input_key(), label_visibility="collapsed")
 
-    def _mic_record():
-        ai = get_audio_io()
-        rec_path = os.path.join(OUT_DIR, "app_rec.wav")
-        if not ai.record(5.0, rec_path):
-            st.toast("录音失败：请检查麦克风", icon="⚠️")
-            return
-        asr = get_asr()
-        text = asr.transcribe_wav(rec_path)
-        if text:
-            st.session_state.robot_input = text
-            st.toast(f"识别：{text}")
+    # 按住说话：浏览器采音（PCM）→ 松手 → 本地 Vosk 识别 → 回填输入框。
+    # 服务端 arecord 只能录固定时长，且要服务器上有麦克风；改成浏览器录音后
+    # 固定 5 秒的限制没有了，也不依赖服务器音频输入设备。
+    _rec_value = hold_to_record()
+    if (isinstance(_rec_value, dict) and _rec_value.get("nonce")
+            and _rec_value.get("nonce") != st.session_state.get("_rec_nonce")):
+        st.session_state["_rec_nonce"] = _rec_value.get("nonce")
+        print(f"[rec] 收到录音 nonce={_rec_value.get('nonce')} "
+              f"bytes={len(_rec_value.get('wav') or '')} "
+              f"ms={_rec_value.get('duration_ms')}", flush=True)
+        _engines_now = asr_available_backends()
+        if not _engines_now:
+            st.session_state["_rec_status"] = (
+                "err", "本地语音识别模型未安装（models/sense-voice/），语音输入不可用。")
         else:
-            st.toast("未听清，请再说一次", icon="⚠️")
-
-    st.button("录音 5 秒", on_click=_mic_record, use_container_width=True,
-              help="对麦克风说话 5 秒，本地识别后填入输入框")
+            _text = ""
+            _level = ""
+            _secs = 0.0
+            try:
+                _path, _secs = decode_wav(
+                    _rec_value, os.path.join(OUT_DIR, "ui_rec.wav")
+                )
+                _peak, _rms = _wav_levels(_path)
+                _level = (f"峰值 {_peak:.0f} dBFS / 均方根 {_rms:.0f} dBFS")
+                _text = get_asr().transcribe_wav(_path)
+            except Exception as exc:
+                st.session_state["_rec_status"] = ("err", f"识别失败：{exc}")
+                _text = None
+            print(f"[rec] 时长 {_secs:.1f}s {_level} 识别={_text!r}", flush=True)
+            if _text is None:
+                pass
+            elif _text:
+                st.session_state["_rec_status"] = (
+                    "ok", f"已录 {_secs:.1f} 秒（{_level}）· 识别：{_text}")
+                st.session_state["_pending_input"] = _text
+                st.rerun()
+            elif _peak < -45:
+                st.session_state["_rec_status"] = (
+                    "err",
+                    f"录到 {_secs:.1f} 秒，但几乎没有声音（{_level}）。"
+                    "检查 Windows「声音设置」里的默认输入设备，以及 Chrome 的麦克风权限。")
+            else:
+                st.session_state["_rec_status"] = (
+                    "warn",
+                    f"已录 {_secs:.1f} 秒（{_level}），但没识别出字词。"
+                    "靠近麦克风、说得慢一点再试；小模型对生僻词本来就弱。")
+    _rec_status = st.session_state.get("_rec_status")
+    if _rec_status:
+        {"ok": st.success, "warn": st.warning, "err": st.error}.get(
+            _rec_status[0], st.info)(_rec_status[1])
+    # 只做目录探测，不加载模型（加载要 1 秒多，别拖慢首屏）
+    _engines = asr_available_backends()
+    st.caption("识别引擎：" + (
+        asr_backend_label(_engines[0]) if _engines else "未安装模型（models/ 下缺 sense-voice）"))
 
     st.markdown('<div class="gi-h">播放设备</div>', unsafe_allow_html=True)
-    # 列出当前在线的 PipeWire 输出；"自动"=跟随系统默认输出。
-    # 选定具体设备 → pw-play --target 定向（不动系统默认，
-    # 也不影响其它程序、不和蓝牙抢默认）。持久化存显示名（serial 会漂移）。
+    # 列出当前系统可用的输出设备；"自动"=跟随系统默认输出。
+    # Linux 使用 PipeWire 定向，Windows 使用 sounddevice/PortAudio 设备索引。
+    # 持久化存显示名，避免设备索引随重启变化。
     _sinks = [(s[1], s[0], s[2]) for s in _list_pw_sinks()]
     _opts = ["自动（跟随系统默认输出）"] + [s[0] for s in _sinks]
     try:
@@ -589,7 +896,7 @@ with col1:
     def _generate():
         """登记后台任务并立即返回（LLM+TTS 在后台线程跑，
         轮询 fragment 跟进进度）→ 生成期间整页不再变暗、控件可用"""
-        text = (st.session_state.get("robot_input") or "").strip()
+        text = (st.session_state.get(_input_key()) or "").strip()
         if not text:
             st.session_state.gen_error = "请输入文本（或录音）"
             return
@@ -605,6 +912,7 @@ with col1:
             "text": text,
             "mode": mode,
             "mode_label": "自然语音" if mode == "natural" else "东汉古韵",
+            "llm_mode": ss.get("llm_mode", "dictionary"),
             "voice": name_to_id.get(ss.get("robot_voice"), voice_ids[0]),
             "rate": f"{int(ss.get('robot_rate', -10)):+d}%",
             "speed": float(ss.get("robot_speed", 1.0)),
@@ -615,7 +923,8 @@ with col1:
         router.voice, router.rate = cfg["voice"], cfg["rate"]
         router.speed, router.pitch = cfg["speed"], cfg["pitch"]
         ss.gen_error = None
-        ss.robot_input = ""
+        ss.pop("_rec_status", None)   # 已经拿去生成了，录音状态行就没意义了
+        _set_input("")     # 换成空的新输入框（同 _set_input 的理由）
         job = {"phase": "start", "result": None, "play_ok": None,
                "user": text, "started": time.time()}
         ss.gen_job = job
@@ -626,14 +935,15 @@ with col1:
     st.markdown('<div class="gi-gap"></div>', unsafe_allow_html=True)
     st.button("生成并朗读", type="primary", use_container_width=True,
               on_click=_generate,
-              help="Qwen 构思文言应答 → 按当前模式合成并自动朗读")
+              help="按所选对话模式生成翻译/应答，再合成并自动朗读")
 
     with st.expander("关于本项目"):
-        st.markdown(f"""- 对话引擎：本地 Qwen3-30B-A3B（llama-server :8080）
+        st.markdown(f"""- 对话模式：大模型 API / 本地词典（可在左侧切换并记住上次选择）
+- 无 API 或 API 不可用时：只使用词典预设应答；未匹配则只朗读输入的古汉语翻译
 - 东汉古韵库：{len(EASTERN_HAN_DB)} 字（郑张尚芳体系，洛阳官音重建）
-- 自然语音：Edge TTS（需网络，断网回退古韵合成）
-- 设备播放：PipeWire 默认输出（蓝牙），异常自动重连
-- 多轮对话：保留最近 {session.max_turns} 轮上下文""")
+- 自然语音：Edge TTS（需网络，失败时可回退古韵合成）
+- 音频设备：Linux 使用 PipeWire/ALSA，Windows 使用系统音频设备
+- 多轮对话：保留最近 {session.max_turns} 轮有效回答上下文""")
 
 # ================= 右栏：结果 =================
 with col2:
@@ -644,7 +954,7 @@ with col2:
     # 后台生成状态区（独立 fragment 轮询，只刷新这一小块）
     _PHASE_LABEL = {
         "start": "正在构思…",
-        "qwen": "构思文言应答…",
+        "qwen": "翻译与生成应答…",
         "synth": "合成语音…",
         "synth_user": "合成语音中 · 我的话…",
         "synth_reply_anc": "合成语音中 · 古韵回答…",
@@ -693,15 +1003,20 @@ with col2:
         if kind == "error":
             ss.gen_error = payload
             return
-        session.add(payload["user"], payload["reply"])   # LLM 上下文
+        # 无应答的词典未命中轮次不进入 LLM 上下文。
+        if payload["reply"]:
+            session.add(payload["user"], payload["reply"])
         ss.last_result = payload
-        ss.turns.append((payload["user"], payload["reply"],
+        display_reply = payload["reply"] or "（本地词典未匹配，未生成回答）"
+        ss.turns.append((payload["user"], display_reply,
                          "自然语音" if payload["mode"] == "natural" else "东汉古韵"))
         ss.turns = ss.turns[-session.max_turns:]
         vol = job.get("vol_note")
         if job.get("play_ok") is True:
-            ss.play_note = ("已朗读到默认输出设备"
-                            + (f"（{vol}）" if vol else ""))
+            dest = job.get("play_target")
+            where = f"「{dest}」" if dest else "默认输出设备"
+            core = "已朗读输入的古汉语翻译到" if not payload["reply"] else "已朗读到"
+            ss.play_note = core + where + (f"（{vol}）" if vol else "")
         elif job.get("play_ok") is False:
             ss.play_note = "已生成（自动朗读失败，可点「设备播放」重试）"
         st.rerun(scope="app")
@@ -716,9 +1031,15 @@ with col2:
     elif res:
         # 元信息（一行，替代徽章堆）
         src = res["source"]
-        src_name = {"local-qwen": "本地 Qwen", "cloud": "云端",
-                    "local-rules": "本地规则", "fallback": "兜底"} \
-            .get(src.split("+")[0], src)
+        src_name = {
+            "local-qwen": "本地 Qwen",
+            "local-model": "模型服务",
+            "cloud": "云端大模型",
+            "local-rules": "本地规则",
+            "local-dictionary": "本地词典",
+            "local-dictionary-miss": "词典未匹配",
+            "fallback": "兜底",
+        }.get(src.split("+")[0], src)
         if "ancient_fallback" in src:
             src_name += " · 古韵兜底"
         meta = f'模式 {res["mode"] if res["mode"] == "natural" else "东汉古韵"} · 来源 {src_name}'
@@ -729,8 +1050,11 @@ with col2:
         if res["translation"]:
             st.markdown(f'<div class="gi-muteline">我的话 · 古汉语：{res["translation"]}</div>',
                         unsafe_allow_html=True)
-        st.markdown(f'<div class="gi-classical">{res["reply"]}</div>',
-                    unsafe_allow_html=True)
+        if res.get("reply"):
+            st.markdown(f'<div class="gi-classical">{res["reply"]}</div>',
+                        unsafe_allow_html=True)
+        elif res.get("source") == "local-dictionary-miss":
+            st.info("本地词典没有匹配到应答。本轮不生成回答，只播放输入内容的古汉语翻译。")
         if res.get("reply_modern") and res["reply_modern"] != res["reply"]:
             st.markdown(f'<div class="gi-muteline">白话：{res["reply_modern"]}</div>',
                         unsafe_allow_html=True)
@@ -740,11 +1064,14 @@ with col2:
         if st.session_state.get("play_note"):
             st.caption(st.session_state.play_note)
         audios = res.get("audios") or {}
-        _CARD_ORDER = [
-            ("user", "我的话 · 东汉古韵"),
-            ("reply_anc", "回答 · 东汉古韵"),
-            ("reply_mod", "回答 · 现代汉语"),
-        ]
+        if not res.get("reply"):
+            _CARD_ORDER = [("user", "输入翻译 · 古汉语")]
+        else:
+            _CARD_ORDER = [
+                ("user", "我的话 · 东汉古韵"),
+                ("reply_anc", "回答 · 东汉古韵"),
+                ("reply_mod", "回答 · 现代汉语"),
+            ]
         for key, label in _CARD_ORDER:
             item = audios.get(key)
             if not item or not item["data"]:
@@ -792,7 +1119,7 @@ with col2:
                                    key=f"dl_{key}")
 
         # 东汉 IPA（古韵模式）
-        if res["mode"] == "ancient":
+        if res["mode"] == "ancient" and res.get("reply"):
             r = text_to_ipa(res["reply"])
             st.markdown('<div class="gi-h">东汉洛阳音 IPA</div>',
                         unsafe_allow_html=True)
@@ -800,7 +1127,7 @@ with col2:
                         unsafe_allow_html=True)
 
         # 逐字音韵分析（古韵模式，收进折叠面板）
-        if res["mode"] == "ancient":
+        if res["mode"] == "ancient" and res.get("reply"):
             rows = analyze_reply(res["reply"])
             if rows:
                 with st.expander(f"逐字音韵分析（{len(rows)} 字）"):

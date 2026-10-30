@@ -62,10 +62,25 @@ def make_turn(user_text: str, mode: str = MODE_NATURAL,
         turn.error = f"llm_error: {e}"
         return turn
 
+    # 词典没有匹配回答时不补造"善"等默认话语，只合成用户输入的古汉语翻译。
     if not turn.reply.strip():
-        turn.reply = "善。"
-        turn.source = "fallback"
-    # 白话版回答缺失时，回退到文言回答本身（"现代汉语朗读"仍有内容可念）
+        turn.reply = ""
+        turn.reply_modern = ""
+        if not turn.translation.strip():
+            turn.error = "dictionary_miss_no_translation"
+            return turn
+        wav, result = synthesize_ancient(
+            turn.translation, pitch=pitch, speed=speed or 1.0
+        )
+        if wav:
+            turn.audio, turn.audio_kind = wav, "wav"
+            turn.coverage_pct = result.coverage_pct
+            turn.approx_chars = result.approx
+        else:
+            turn.error = "translation_synth_failed"
+        return turn
+
+    # 白话版回答缺失时，不编造白话内容；有文言回答时自然语音可回退读文言。
     if not turn.reply_modern.strip():
         turn.reply_modern = turn.reply
 
