@@ -44,6 +44,12 @@ def make_turn(user_text: str, mode: str = MODE_NATURAL,
     pitch : 古韵基频 Hz（两种模式下都生效：古韵直接合成，
             自然模式断网回退古韵时同样使用）
     """
+    # 「None=用默认」必须在这里解析：如果直接把 None 传给
+    # speak_natural(voice=None)，会覆盖掉函数签名里的默认音色，
+    # edge_tts 拿到 None 抛 "voice must be str"，自然模式就静默退回古韵合成。
+    voice = voice or getattr(tts_client, "VOICE", None)
+    rate = rate or getattr(tts_client, "RATE", None)
+
     turn = Turn(user_text=user_text, translation="", reply="",
                 reply_modern="", source="", mode=mode,
                 audio=b"", audio_kind="", error=None)
