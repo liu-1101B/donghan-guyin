@@ -10,7 +10,7 @@
 - 仓库根：`donghan-guyin/`，当前根目录检出的是 **`main`**
 - 本分支的工作树：**`donghan-guyin/.wt-feat-phon/`** ← 所有开发都在这里
 - 分支：`feat/historical-phonology-foundation`
-- 状态：**领先 `origin` 80 个提交，全部本地未推送**（没有推送凭据，**不要推送**）
+- 状态：**领先 `origin` 81 个提交，全部本地未推送**（没有推送凭据，**不要推送**）
 - 工作区约定：`run_feat_tests.py`（工作树根，未跟踪，测试运行器，**保留**）
 
 ## 二、运行环境（照抄即可）
@@ -49,7 +49,9 @@ $env:PYTHONUTF8 = "1"; $env:PYTHONIOENCODING = "utf-8"
    全部 Access Denied，但**目录重命名可以**——已改名为 `*_stale*` 移出导入路径）。
    它们是死重量，`import numpy/scipy` 永远解析到 `.libs_guyun2`，不要试图再删，
    也不要让 `.libs_guyun` 排在 `.libs_guyun2` 前面。
-4. **跑测试要用工作树根的 `run_feat_tests.py`**（107 项全绿）
+4. **跑测试要用工作树根的 `run_feat_tests.py`**（现跑 `test_historical_phonology.py`
+   + `test_llm_provider.py`，132 项全绿；robot 冒烟 `tests/test_robot_app_smoke.py`
+   不在其中，要单独跑）
    原生 `python -m unittest` 会有 5 项假失败——沙箱拒绝写入 `tempfile.mkdtemp()`
    创建的 `0o700` 目录，该脚本把 `0o700` 重映射为 `0o707`。
    仓库根的 `run_tests_sandbox.py` **不要**在工作树 CWD 下运行。
@@ -142,10 +144,47 @@ $env:PYTHONUTF8 = "1"; $env:PYTHONIOENCODING = "utf-8"
   （四段 payload / 无应答诚实为空，LLM/TTS/声卡全打桩）；
   `run_feat_tests.py` 110 项全绿，robot app 冒烟 3 项全绿。
 
+### 第四阶段 ② ✅ 已完成（词典未命中接 LLM 翻译，单提交）
+
+- `services/llm_client.py`：
+  - `dict_miss_chars(text)`：字级词典覆盖——按出现顺序、去重，返回不出现在
+    任何 `TRANSLATION_DICT` key 里的 CJK 字（字级近似，只用于如实标注与触发
+    回退，不用于回填）。
+  - `_call_translate(...)`：只翻译的调用（`build_translate_prompt` 纯文言输出），
+    与 `_call_chat` 同 `trust_env`/超时策略；输出为空或被截断就抛异常，
+    绝不把残缺 JSON 当翻译返回。
+  - `generate_turn(..., allow_llm_translate=False)` + `_local_fallback(...)`：
+    返回新增 `translation_source`（`dictionary` | `llm`）、`missed_chars`、
+    `dict_translation`（LLM 补译时保留词典原结果）。
+  - **契约**：LLM 只补「翻译」一层，`reply`/`reply_modern` 恒为空——
+    「宁可不答不编造」不因 LLM 参与而放宽；开关默认关（opt-in）、
+    仅词典模式生效、无密钥/LLM 失败时静默回退词典翻译并如实标注；
+    api 模式失败回退时不向同一端点发起第二次 LLM 调用。
+  - 顺带修旧 bug：`_call_chat` 非截断失败（断网/401/超时）没有 `break`，
+    会加大 max_tokens 无意义地重试一次（旧测试 `assert_called_once` 即被
+    违反，此前该测试不在 runner 里所以没暴露）。
+- `language/turn_engine.py`：`make_turn(..., allow_llm_translate=False)` 透传，
+  `Turn` 新增 `translation_source`。
+- `robot/app.py`：对话模式区新增复选框「词典未命中时允许 LLM 辅助翻译」
+  （默认 = 是否已有密钥；无密钥时提示不可用）；payload 新增
+  `translation_source`/`missed_chars`；元信息行「· 翻译 LLM」；
+  翻译行尾「（LLM 补译 · 词典缺 N 字：…）」。
+- 旧钉住的 `test_dictionary_miss_returns_no_fabricated_reply` **原样未动**
+  （默认关 ⇒ 行为不变）。
+- 测试：`run_feat_tests.py` 改为跑两个文件（`test_historical_phonology.py`
+  110 + `test_llm_provider.py` 22 = **132 项全绿**）；新增
+  `DictMissCharTests` 3 项（`量子计算`→`[量,子,计,算]`、`今天天气真好`→`[]`、
+  顺序去重、非 CJK 忽略）+ `DictMissLLMTranslateTests` 7 项（开关/无密钥/
+  失败回退/预设应答命中不走 LLM/api 标注/api 失败不二次调用）+
+  `DictTranslateCallTests` 2 项（prompt 形态 + 局域网 trust_env、截断抛错）+
+  `TurnEngineTranslationSourceTests` 1 项；robot app 冒烟 3 项全绿
+  （worker 桩加 `allow_llm_translate` 形参，并断言新 payload 字段）；
+  `scripts/smoke_app.py` 6 个 selectbox 正常。
+
 ### 下一阶段（第四阶段余下，用户已定顺序）
 
 - ✅ ① 一句话多时期音频对照（东汉 / 中古 / 现代同句三版）——已完成；
-- ② 翻译层词典未命中时接 LLM（宁可不答不编造，标注 dict vs LLM）；
+- ✅ ② 翻译层词典未命中时接 LLM（宁可不答不编造，标注 dict vs LLM）——已完成；
 - ③ 多音字按词切分选音；
 - Jetson 真机链路回归清单（见 v5-goal.md 第五阶段）。
 
@@ -153,7 +192,8 @@ $env:PYTHONUTF8 = "1"; $env:PYTHONIOENCODING = "utf-8"
 
 | 能力 | 状态 |
 |---|---|
-| 白话→古文（词典） | ✅ |
+| 白话→古文（词典，缺字如实标注） | ✅ `dict_miss_chars` 字级覆盖 |
+| 词典未命中 LLM 补译（opt-in，标注来源） | ✅ `allow_llm_translate`，回答恒不编造 |
 | 东汉音 IPA（703 字，legacy 路径） | ✅ |
 | 11 家学者拟音逐字合成 | ✅ eSpeak 出声，双列对照 UI |
 | 东汉→中古音类对应表 | ✅ 493/703 锚定，526 对，30 母/58 韵粒度，`scripts/correspondence_report.py` |

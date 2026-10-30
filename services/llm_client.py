@@ -6,6 +6,10 @@ services/llm_client.py
 - 配置 LLM_API_KEY / OPENAI_API_KEY：调用 LLM_BASE_URL 指定的大模型 API；
 - 未配置密钥：不访问任何模型服务，只使用本地词典和预设应答。
 本地词典未命中时 reply 为空，交由调用方只播放用户输入的古汉语翻译。
+
+词典模式另有一个显式开关 allow_llm_translate（默认关）：词典未命中且
+配置了密钥时，只用大模型补「翻译」一层（结果标注 translation_source="llm"）；
+reply 仍然为空——「宁可不答不编造」的契约不因 LLM 参与而放宽。
 """
 import ipaddress
 import json
@@ -15,7 +19,11 @@ from urllib.parse import urlparse
 
 import httpx
 
-from classical_translator import simple_translate
+from classical_translator import (
+    simple_translate,
+    TRANSLATION_DICT,
+    build_translate_prompt,
+)
 from language.style_prompt import SYSTEM_PROMPT, MAX_REPLY_CHARS
 
 try:
@@ -106,9 +114,34 @@ _DEFAULT_REPLY = "善哉。君之言，吾闻之矣。愿闻其详。"
 _DEFAULT_REPLY_MODERN = "说得好。你的话我听到了，想听听更多。"
 
 
-def _local_fallback(text: str):
-    """无 API 时只使用本地词典/预设应答；没有命中就不编造回答。"""
+# 字级词典覆盖：所有出现在词典 key 里的 CJK 字。
+# 注意这是字级近似——只出现在多字 key 里的字（如「自己」的「子」）也算覆盖，
+# 单字未必译得动。该集合只用于 (a) 如实标注翻译覆盖 (b) 触发 LLM 翻译回退，
+# 绝不用于悄悄回填翻译结果。
+_CJK_CHAR_RE = re.compile(r"[\u4e00-\u9fff]")
+_DICT_CHAR_SET = frozenset("".join(TRANSLATION_DICT.keys()))
+
+
+def dict_miss_chars(text: str) -> list:
+    """按出现顺序、去重，返回 text 中不出现在任何词典 key 里的 CJK 字。"""
+    missed = []
+    for ch in text:
+        if (_CJK_CHAR_RE.fullmatch(ch)
+                and ch not in _DICT_CHAR_SET
+                and ch not in missed):
+            missed.append(ch)
+    return missed
+
+
+def _local_fallback(text: str, allow_llm_translate: bool = False):
+    """词典模式回退：只使用本地词典/预设应答；没有命中就不编造回答。
+
+    allow_llm_translate=True 且已配置密钥时，词典未命中会请大模型补
+    「翻译」一层（translation_source="llm"，词典结果留在 dict_translation）；
+    reply 仍为空——不编造回答的契约不放宽。
+    """
     translation = simple_translate(text)
+    missed = dict_miss_chars(text)
     for keys, canned, modern in _LOCAL_REPLIES:
         if any(k in text for k in keys):
             return {
@@ -116,12 +149,33 @@ def _local_fallback(text: str):
                 "reply": canned,
                 "reply_modern": modern,
                 "source": "local-dictionary",
+                "translation_source": "dictionary",
+                "missed_chars": missed,
+            }
+    if missed and allow_llm_translate and API_KEY:
+        try:
+            llm_translation = _call_translate(
+                LLM_BASE, LLM_MODEL, text, key=API_KEY, timeout=60.0).strip()
+        except Exception as e:
+            _safe_log(f"[llm] LLM 翻译回退失败，保留词典翻译：{e}")
+            llm_translation = ""
+        if llm_translation:
+            return {
+                "translation": llm_translation,
+                "reply": "",
+                "reply_modern": "",
+                "source": "local-dictionary-miss",
+                "translation_source": "llm",
+                "dict_translation": translation,
+                "missed_chars": missed,
             }
     return {
         "translation": translation,
         "reply": "",
         "reply_modern": "",
         "source": "local-dictionary-miss",
+        "translation_source": "dictionary",
+        "missed_chars": missed,
     }
 
 
@@ -211,12 +265,52 @@ def _call_chat(base: str, model: str, text: str, history, key="", timeout=120.0,
     return _extract_json(content, text)
 
 
-def generate_turn(text: str, history=None, mode: str = None) -> dict:
+def _call_translate(base: str, model: str, text: str, key="", timeout=60.0,
+                    max_tokens=2048):
+    """只翻译的调用：prompt 要求纯文言输出，返回原始文本（不做 JSON 解析）。
+
+    与 _call_chat 不同，这里绝不把残缺 JSON 当翻译返回：输出为空或被
+    截断就抛异常，由调用方回退词典翻译。
+    """
+    headers = {"Content-Type": "application/json"}
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    payload = {"messages": [{"role": "user",
+                             "content": build_translate_prompt(text)}],
+               "temperature": 0.7, "max_tokens": max_tokens}
+    if model:
+        payload["model"] = model
+    # 与 _call_chat 相同的代理策略：本地/局域网端点不走公网代理。
+    trust_env = _trust_env_for_endpoint(base)
+    timeout_cfg = httpx.Timeout(timeout, connect=min(5.0, timeout))
+    r = httpx.post(f"{base}/chat/completions", headers=headers,
+                   json=payload, timeout=timeout_cfg, trust_env=trust_env)
+    r.raise_for_status()
+    data = r.json()
+    choice = (data.get("choices") or [{}])[0]
+    message = choice.get("message") or {}
+    content = (message.get("content") or "").strip()
+    finish = choice.get("finish_reason")
+    if finish == "length":
+        reasoning = len(message.get("reasoning_content") or "")
+        raise RuntimeError(
+            f"输出被截断：max_tokens={max_tokens}，其中推理内容 {reasoning} 字")
+    if not content:
+        raise RuntimeError("模型返回空内容")
+    return content
+
+
+def generate_turn(text: str, history=None, mode: str = None,
+                  allow_llm_translate: bool = False) -> dict:
     """两条明确路线：mode='api' 用大模型；mode='dictionary' 只查本地词典。
 
     mode=None 时供命令行调用：已配置密钥则用 API，否则用词典。
     API 调用失败会回退词典；词典未命中时 reply/reply_modern 均为空，
     上层必须只播放 translation 的古汉语音频，不得补造默认回答。
+
+    allow_llm_translate（仅词典模式生效）：词典未命中时只请 LLM 补
+    「翻译」一层并标注 translation_source="llm"；reply 恒为空——
+    LLM 翻译成功也不编造回答。
     """
     selected = (mode or ("api" if API_KEY else "dictionary")).strip().lower()
     if selected not in {"api", "dictionary"}:
@@ -232,6 +326,8 @@ def generate_turn(text: str, history=None, mode: str = None) -> dict:
                 try:
                     out = _call_chat(LLM_BASE, LLM_MODEL, text, history,
                                      key=API_KEY, timeout=60.0, max_tokens=budget)
+                    # api 模式的翻译必然来自大模型，标注来源供界面展示
+                    out["translation_source"] = "llm"
                     out["source"] = "cloud"
                     break
                 except Exception as e:
@@ -240,9 +336,15 @@ def generate_turn(text: str, history=None, mode: str = None) -> dict:
                         _safe_log(f"[llm] {detail}；用更大 max_tokens 重试")
                         continue
                     _safe_log(f"[llm] 云端 API 调用失败，改用本地词典：{detail}")
-
-    if out is None:
-        out = _local_fallback(text)
+                    # 非截断失败（断网、401、超时……）加大 max_tokens 没有意义，
+                    # 直接回退词典，不向同一端点重复发起调用。
+                    break
+        # API 失败/未配置时不再向同一个端点发起第二次 LLM 调用，
+        # 直接词典回退（allow_llm_translate 仅词典模式生效）。
+        if out is None:
+            out = _local_fallback(text)
+    else:
+        out = _local_fallback(text, allow_llm_translate)
     # 繁体 → 简体（古韵库字表为简体）
     out["translation"] = _to_simplified(out.get("translation", ""))
     out["reply"] = _to_simplified(out["reply"])

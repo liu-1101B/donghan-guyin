@@ -300,12 +300,15 @@ def _gen_worker(job, session, cfg):
     try:
         job["phase"] = "qwen"
         gen = llm_client.generate_turn(
-            cfg["text"], session.history(), mode=cfg.get("llm_mode")
+            cfg["text"], session.history(), mode=cfg.get("llm_mode"),
+            allow_llm_translate=bool(cfg.get("allow_llm_translate"))
         )
         translation = (gen.get("translation") or "").strip()
         reply = (gen.get("reply") or "").strip()
         reply_modern = (gen.get("reply_modern") or "").strip() if reply else ""
         source = gen.get("source", "local")
+        translation_source = gen.get("translation_source", "")
+        missed_chars = gen.get("missed_chars") or []
         middle_system = cfg.get("middle_system") or MIDDLE_SYSTEM_DEFAULT
 
         # 词典无匹配时，不创建虚构回答；只合成输入内容的古汉语翻译。
@@ -360,6 +363,8 @@ def _gen_worker(job, session, cfg):
         job["result"] = ("ok", {
             "user": cfg["text"],
             "translation": translation,
+            "translation_source": translation_source,
+            "missed_chars": missed_chars,
             "reply": reply,
             "reply_modern": reply_modern,
             "source": source,
@@ -752,6 +757,19 @@ with col1:
     )
     _llm_now = _current_llm_settings()
 
+    if "allow_llm_translate" not in st.session_state:
+        st.session_state["allow_llm_translate"] = bool(_llm_now["key"])
+    st.checkbox(
+        "词典未命中时允许 LLM 辅助翻译",
+        key="allow_llm_translate",
+        help="只在「本地词典」模式下生效：词典没有覆盖的字时，用大模型补「翻译」"
+             "一层（界面标注 翻译来源=LLM）。回答永远不靠 LLM 编造：未命中仍不回答。",
+    )
+    if (st.session_state.get("llm_mode") == "dictionary"
+            and st.session_state.get("allow_llm_translate")
+            and not _llm_now["key"]):
+        st.caption("提示：未配置密钥时 LLM 辅助翻译不可用，仍只使用本地词典。")
+
     def _save_api_settings():
         """button callback：改 .env 与 os.environ。
 
@@ -934,6 +952,7 @@ with col1:
             "mode": mode,
             "mode_label": "自然语音" if mode == "natural" else "东汉古韵",
             "llm_mode": ss.get("llm_mode", "dictionary"),
+            "allow_llm_translate": bool(ss.get("allow_llm_translate", False)),
             "voice": name_to_id.get(ss.get("robot_voice"), voice_ids[0]),
             "rate": f"{int(ss.get('robot_rate', -10)):+d}%",
             "speed": float(ss.get("robot_speed", 1.0)),
@@ -1068,10 +1087,20 @@ with col2:
         meta = f'模式 {res["mode"] if res["mode"] == "natural" else "东汉古韵"} · 来源 {src_name}'
         if res["mode"] == "ancient":
             meta += f' · 古韵覆盖 {res["coverage"]}%'
+        if res.get("translation_source") == "llm":
+            meta += " · 翻译 LLM"
         st.markdown(f'<div class="gi-meta">{meta}</div>', unsafe_allow_html=True)
 
         if res["translation"]:
-            st.markdown(f'<div class="gi-muteline">我的话 · 古汉语：{res["translation"]}</div>',
+            _trans_note = ""
+            if res.get("translation_source") == "llm":
+                _missed = res.get("missed_chars") or []
+                if _missed:
+                    _shown = "、".join(_missed[:8]) + ("…" if len(_missed) > 8 else "")
+                    _trans_note = f'（LLM 补译 · 词典缺 {len(_missed)} 字：{_shown}）'
+                else:
+                    _trans_note = "（LLM 补译）"
+            st.markdown(f'<div class="gi-muteline">我的话 · 古汉语：{res["translation"]}{_trans_note}</div>',
                         unsafe_allow_html=True)
         if res.get("reply"):
             st.markdown(f'<div class="gi-classical">{res["reply"]}</div>',

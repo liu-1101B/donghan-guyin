@@ -24,6 +24,7 @@ class Turn:
     reply: str                # 机器人回答（东汉文言）
     reply_modern: str = ""    # 机器人回答的现代白话版
     source: str = ""          # cloud | local
+    translation_source: str = ""  # dictionary | llm（翻译由谁产出）
     mode: str = ""            # natural | ancient
     audio: bytes = b""        # mp3 或 wav
     audio_kind: str = ""      # "mp3" | "wav"
@@ -35,7 +36,8 @@ class Turn:
 def make_turn(user_text: str, mode: str = MODE_NATURAL,
               history=None, pitch: int = 130,
               voice: str = None, rate: str = None,
-              speed: float = None) -> Turn:
+              speed: float = None,
+              allow_llm_translate: bool = False) -> Turn:
     """单轮处理。音色/语速参数：
 
     voice : 自然语音的 Edge TTS 音色 id（None=用默认）
@@ -43,6 +45,8 @@ def make_turn(user_text: str, mode: str = MODE_NATURAL,
     speed : 古韵语速倍率（1.0 正常；None=用默认）
     pitch : 古韵基频 Hz（两种模式下都生效：古韵直接合成，
             自然模式断网回退古韵时同样使用）
+    allow_llm_translate : 词典未命中时是否允许 LLM 补「翻译」
+                          （只影响翻译层与标注；回答仍不编造）
     """
     # 「None=用默认」必须在这里解析：如果直接把 None 传给
     # speak_natural(voice=None)，会覆盖掉函数签名里的默认音色，
@@ -59,11 +63,13 @@ def make_turn(user_text: str, mode: str = MODE_NATURAL,
 
     # 1) 文言文翻译 + 回答（含白话版回答）
     try:
-        gen = llm_client.generate_turn(user_text, history)
+        gen = llm_client.generate_turn(user_text, history,
+                                       allow_llm_translate=allow_llm_translate)
         turn.translation = gen.get("translation", "")
         turn.reply = gen.get("reply", "")
         turn.reply_modern = gen.get("reply_modern", "")
         turn.source = gen.get("source", "local")
+        turn.translation_source = gen.get("translation_source", "")
     except Exception as e:
         turn.error = f"llm_error: {e}"
         return turn

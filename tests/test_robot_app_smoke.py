@@ -50,13 +50,17 @@ class WorkerFourAudioTests(unittest.TestCase):
              ra.get_audio_io) = orig
 
     def test_reply_path_has_four_audio_slots(self):
-        def gen(text, history=None, mode="dictionary"):
+        def gen(text, history=None, mode="dictionary",
+                allow_llm_translate=False):
             return {"translation": "天子", "reply": "善哉",
                     "reply_modern": "好啊", "source": "local-dictionary"}
 
         job = self._run_worker(gen)
         kind, res = job["result"]
         self.assertEqual(kind, "ok")
+        # ② 翻译来源字段进入 payload（桩未提供 → 空串，界面不标注）
+        self.assertEqual(res["translation_source"], "")
+        self.assertEqual(res["missed_chars"], [])
         audios = res["audios"]
         self.assertEqual(set(audios), {"user", "reply_anc", "reply_mc",
                                        "reply_mod"})
@@ -72,13 +76,19 @@ class WorkerFourAudioTests(unittest.TestCase):
         self.assertTrue(job.get("play_done") is True)
 
     def test_no_reply_path_keeps_reply_mc_honest_empty(self):
-        def gen(text, history=None, mode="dictionary"):
+        def gen(text, history=None, mode="dictionary",
+                allow_llm_translate=False):
             return {"translation": "量子计算", "reply": "",
-                    "reply_modern": "", "source": "local-dictionary-miss"}
+                    "reply_modern": "", "source": "local-dictionary-miss",
+                    "translation_source": "dictionary",
+                    "missed_chars": ["量", "子", "计", "算"]}
 
         job = self._run_worker(gen)
         kind, res = job["result"]
         self.assertEqual(kind, "ok")
+        # ② 未命中的缺字如实透传到 payload
+        self.assertEqual(res["translation_source"], "dictionary")
+        self.assertEqual(res["missed_chars"], ["量", "子", "计", "算"])
         mc = res["audios"]["reply_mc"]
         self.assertEqual(mc["data"], b"")
         self.assertEqual(mc["ipa"], "")
