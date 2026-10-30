@@ -21,6 +21,12 @@ from language.history.qieyun_data import (
     load_qieyun_positions as load_qieyun_positions_all,
 )
 from language.ancient_tts import text_to_ipa
+from language.polyphone import (
+    MODERN_TO_TONE_CLASS,
+    _empirical_votes,
+    segment,
+    select_reading,
+)
 from language.phoneme_capability import (
     ESPEAK_IPA_MAP, classify_symbol, assess_ipa, system_capability_report,
     _formant_status, OK, APPROX, SILENT, COMBINING, JUNK,
@@ -589,6 +595,190 @@ class TtsSystemRoutingTests(unittest.TestCase):
         self.assertEqual(r.characters[0][2], "approx")
         self.assertEqual(r.approx, 1)
         self.assertIsNone(r.system_id)
+
+
+def _first_clean_ipa(char, system_id):
+    """该字在学者表的首条非 suspect 行 IPA（fallback_first 的选中值）。
+
+    直接取数据侧真值，避免在测试里手敲含组合符号的 IPA 字面量。
+    """
+    from language.polyphone import to_traditional
+    recs = lookup_scholar_reading(to_traditional(char), system_id)
+    return next(r.ipa for r in recs if not r.suspect)
+
+
+class PolyphoneSelectionTests(unittest.TestCase):
+    """Phase 4 (3): 多音字词级选音（jieba 分词 + pypinyin 声调 + 经验地位映射）。
+
+    原则：IPA 永远来自学者表本身；选不出就 fallback_first 并写明卡因，不猜测。
+    """
+
+    # ---- 基础行为 ----
+
+    def test_tone_class_mapping(self):
+        self.assertEqual(MODERN_TO_TONE_CLASS[1], frozenset({"平"}))
+        self.assertEqual(MODERN_TO_TONE_CLASS[2], frozenset({"平"}))
+        self.assertEqual(MODERN_TO_TONE_CLASS[3], frozenset({"上", "入"}))
+        self.assertEqual(MODERN_TO_TONE_CLASS[4], frozenset({"去", "入"}))
+
+    def test_segment_uses_jieba(self):
+        words = segment("银行的行")
+        self.assertIn("银行", words)
+        self.assertIn("行走", segment("行走的行"))
+        self.assertIn("解说", segment("解说文"))
+
+    def test_single_record_char_is_single(self):
+        s = select_reading("東", "東", "wangli_mc")
+        self.assertEqual(s.method, "single")
+        self.assertEqual(s.selected.ipa, "tuŋ")
+        self.assertEqual(len(s.candidates), 1)
+        self.assertIsNone(s.modern_tone)
+
+    def test_no_records(self):
+        s = select_reading("龘", "龘", "wangli_mc")
+        self.assertEqual(s.method, "no_records")
+        self.assertIsNone(s.selected)
+        self.assertIn("无条目", s.note)
+
+    def test_simplified_input_looks_up_traditional(self):
+        # 东 → 東（s2t）；display 保留原字
+        s = select_reading("东", "东", "wangli_mc")
+        self.assertEqual(s.traditional, "東")
+        self.assertEqual(s.character, "东")
+        self.assertEqual(s.method, "single")
+        self.assertEqual(s.selected.ipa, "tuŋ")
+
+    def test_invalid_arguments(self):
+        with self.assertRaises(ValueError):
+            select_reading("行行", "行行", "wangli_mc")
+        with self.assertRaises(KeyError):
+            select_reading("行", "行", "nonexistent_system")
+
+    # ---- 经验选音（method="empirical"） ----
+
+    def test_empirical_jie_wangli(self):
+        # 解：解说 (jie3, 上/入) → 見開佳上；同类字（佳/懈）一致读 kai
+        s = select_reading("解", "解说文", "wangli_mc")
+        self.assertEqual(s.method, "empirical")
+        self.assertEqual(s.word, "解说")
+        self.assertEqual(s.modern_tone, 3)
+        self.assertEqual(s.tone_class, frozenset({"上", "入"}))
+        self.assertEqual(s.selected.ipa, "kai")
+        self.assertIn("見開佳上", s.note)
+
+    def test_empirical_tu_wangli(self):
+        # 土：率土之滨 (tu3, 上/入) → 透模上 → tʰu
+        s = select_reading("土", "率土之滨", "wangli_mc")
+        self.assertEqual(s.method, "empirical")
+        self.assertEqual(s.selected.ipa, "tʰu")
+
+    def test_empirical_hao_wangli(self):
+        # 好：好人 (hao3, 上/入) → 曉豪上；蒿 平声一致读 hɑu
+        s = select_reading("好", "好人好事", "wangli_mc")
+        self.assertEqual(s.method, "empirical")
+        self.assertEqual(s.selected.ipa, "hɑu")
+
+    def test_empirical_xing_karlgren(self):
+        # 行：行走 (xing2, 平) → 匣開二庚平；杏 一致读 ɣɐŋ
+        s = select_reading("行", "行走的行", "karlgren_mc")
+        self.assertEqual(s.method, "empirical")
+        self.assertEqual(s.selected.ipa, "ɣɐŋ")
+        self.assertEqual(s.word, "行走")
+        self.assertEqual(s.modern_tone, 2)
+
+    # ---- 不可判定 → fallback_first（诚实说明卡因） ----
+
+    def test_fallback_xing_wangli_conflicting_votes(self):
+        # 行：王力表 匣開二庚 类投票不一致（杏 ɣɐŋ / 垎 ɣɐk）→ 不确认
+        s = select_reading("行", "银行的行", "wangli_mc")
+        self.assertEqual(s.method, "fallback_first")
+        self.assertEqual(s.selected.ipa, "ɣɑŋ")  # 首条
+        self.assertEqual(len(s.candidates), 4)
+        self.assertIn("无一致读法", s.note)
+        self.assertEqual(s.word, "银行")
+        self.assertEqual(s.modern_tone, 2)
+        self.assertEqual(len(s.positions), 1)  # 匣開二庚平
+
+    def test_fallback_zhong_wangli_value_mismatch(self):
+        # 中：一致读法 ȶǐuk（竹 入声）与本字各行 ȶǐuŋ 不符 → 首条
+        s = select_reading("中", "中国的字", "wangli_mc")
+        self.assertEqual(s.method, "fallback_first")
+        self.assertEqual(s.selected.ipa, _first_clean_ipa("中", "wangli_mc"))
+        self.assertIn("不相符", s.note)
+        self.assertEqual(s.modern_tone, 1)
+
+    def test_fallback_zhong_qu_tone(self):
+        # 打中 (zhong4, 去/入) → 東去地位，同样不可判定
+        s = select_reading("中", "打中的字", "wangli_mc")
+        self.assertEqual(s.method, "fallback_first")
+        self.assertEqual(s.selected.ipa, _first_clean_ipa("中", "wangli_mc"))
+        self.assertEqual(s.modern_tone, 4)
+        self.assertEqual(s.tone_class, frozenset({"去", "入"}))
+
+    def test_fallback_shuai_wangli_no_votes(self):
+        # 率：生合眞入 类无任何无歧义投票字 → 首条 ʃwi
+        s = select_reading("率", "率领大军", "wangli_mc")
+        self.assertEqual(s.method, "fallback_first")
+        self.assertEqual(s.selected.ipa, "ʃwi")
+        self.assertIn("无一致读法", s.note)
+
+    def test_fallback_hao_preference_no_position(self):
+        # 好 (hao4, 去/入)：粗表只有 豪上 地位，无属去/入类地位
+        s = select_reading("好", "喜好文雅", "wangli_mc")
+        self.assertEqual(s.method, "fallback_first")
+        self.assertEqual(s.selected.ipa, "hɑu")
+        self.assertEqual(s.positions, ())
+        self.assertIn("无属该调类的地位", s.note)
+
+    # ---- text_to_ipa 接线 ----
+
+    def test_empirical_votes_are_nontrivial(self):
+        votes, voted_chars = _empirical_votes("wangli_mc")
+        self.assertGreater(voted_chars, 1500)
+        self.assertGreater(len(votes), 500)
+        for vs in votes.values():
+            for head, sheng, ipa in vs:
+                self.assertTrue(ipa)
+                self.assertIn(sheng, "平上去入")
+
+    def test_text_to_ipa_selections_empirical(self):
+        r = text_to_ipa("解说文", system_id="wangli_mc")
+        self.assertEqual(r.coverage, 3)
+        by_char = {ch: (ipa, method, note) for ch, ipa, method, note in r.selections}
+        self.assertIn("解", by_char)
+        self.assertEqual(by_char["解"][:2], ("kai", "empirical"))
+
+    def test_text_to_ipa_selections_fallback(self):
+        r = text_to_ipa("银行的行", system_id="wangli_mc")
+        self.assertEqual(r.coverage, 4)
+        xings = [(ipa, method) for ch, ipa, method, note in r.selections
+                 if ch == "行"]
+        self.assertEqual(xings, [("ɣɑŋ", "fallback_first")] * 2)
+        self.assertIn("ɣɑŋ", r.ipa_text)
+        self.assertIn(_first_clean_ipa("银", "wangli_mc"), r.ipa_text)  # 银
+
+    def test_text_to_ipa_scholar_simplified_char(self):
+        # 简繁：东 → 東，逐字明细显示原字
+        r = text_to_ipa("东", system_id="wangli_mc")
+        self.assertEqual(r.characters, [("东", "tuŋ", "covered")])
+        self.assertEqual(r.selections, ())
+
+    def test_text_to_ipa_legacy_selections_empty(self):
+        r = text_to_ipa("中")
+        self.assertEqual(r.selections, ())
+        self.assertIsNone(r.system_id)
+
+    def test_text_to_ipa_context_param(self):
+        # context 显式覆盖：单字输入 + 外部上下文
+        r = text_to_ipa("行", system_id="karlgren_mc", context="行走")
+        xing = [s for s in r.selections if s[0] == "行"]
+        self.assertEqual(len(xing), 1)
+        self.assertEqual(xing[0][1], "ɣɐŋ")
+        self.assertEqual(xing[0][2], "empirical")
+
+    def test_text_to_ipa_xingzou_karlgren(self):
+        r = text_to_ipa("行走", system_id="karlgren_mc")
+        self.assertEqual(r.characters[0], ("行", "ɣɐŋ", "covered"))
 
 
 class EraComparisonTests(unittest.TestCase):

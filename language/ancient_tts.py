@@ -78,6 +78,9 @@ class AncientResult:
     # 逐字明细 (字, IPA 或 None, "covered"/"approx"/"unknown")，供 UI 做
     # 「重建状态（数据侧）× 合成能力（引擎侧）」双列展示
     characters: list = field(default_factory=list)
+    # 阶段 4 (3)：多音字选音明细 (字, IPA, method, note)，仅学者体系且
+    # 该字有 ≥2 条非 suspect 行时出现；fallback_first 的 note 写明卡因
+    selections: tuple = ()
 
     @property
     def total(self):
@@ -110,7 +113,8 @@ def _resolve_synthesis_system(system_id: Optional[str]) -> str:
         f"不能送发音引擎；请用 lookup_reading / compare_character 查询。")
 
 
-def text_to_ipa(classical: str, system_id: Optional[str] = None) -> AncientResult:
+def text_to_ipa(classical: str, system_id: Optional[str] = None,
+                context: Optional[str] = None) -> AncientResult:
     """文言文 → IPA 序列（标点转停顿），并统计覆盖率。
 
     system_id=None：东汉实验字表（703 字）+ 现代拼音近似回退，行为与旧版一致。
@@ -118,12 +122,27 @@ def text_to_ipa(classical: str, system_id: Optional[str] = None) -> AncientResul
     "lifanggui_oc"）；体系内缺字或源表缺陷行计为 unknown，
     **不用现代拼音补**（不伪造该体系读音）。
     无逐字 IPA 的体系（反切地位 / PHONO-ML / 中原音韵 / 未接入）抛 ValueError。
+
+    阶段 4 (3) 多音字选音：学者体系下，对有多条非 suspect 行的字，
+    用 jieba 分词 + pypinyin 词级声调 + 广韵地位经验映射（language.polyphone）
+    选定一条行；不可判定时按首条回退并在 ``selections`` 中写明原因。
+    context 给定时作为分词/声调的上下文，缺省用 classical 自身。
+    旧路径（legacy）与单行字行为完全不变。
     """
     mode = _resolve_synthesis_system(system_id)
-    from language.history import lookup_reading
-    ipa_parts, unknown, chars = [], [], []
+    ipa_parts, unknown, chars, selections = [], [], [], []
     coverage = approx = 0
-    for ch in classical:
+    ctx = context if context else classical
+    # 预切分一次，逐字映射到所在词（避免 O(n²) 分词）
+    word_at = {}
+    if mode != "legacy":
+        from language.polyphone import segment
+        pos = 0
+        for w in segment(ctx):
+            for i, _c in enumerate(w):
+                word_at[pos + i] = w
+            pos += len(w)
+    for i, ch in enumerate(classical):
         if ch in '。！？':
             ipa_parts.append('.')
         elif ch in '，、；：':
@@ -149,14 +168,20 @@ def text_to_ipa(classical: str, system_id: Optional[str] = None) -> AncientResul
                         continue
                 ipa_parts.append(data['ipa'])
             else:
-                reading = lookup_reading(ch, mode)
-                if reading.available:
+                from language.polyphone import select_reading
+                sel = select_reading(ch, ctx, mode, word=word_at.get(i))
+                if sel.selected is not None:
                     coverage += 1
-                    chars.append((ch, reading.ipa, 'covered'))
-                    ipa_parts.append(reading.ipa)
+                    chars.append((ch, sel.selected.ipa, 'covered'))
+                    ipa_parts.append(sel.selected.ipa)
+                    if len(sel.candidates) > 1:
+                        selections.append((ch, sel.selected.ipa,
+                                           sel.method, sel.note))
                 else:
                     unknown.append(ch)
                     chars.append((ch, None, 'unknown'))
+                    if len(sel.candidates) > 1:
+                        selections.append((ch, None, sel.method, sel.note))
         # 引号括号等直接跳过
     # 过滤含中文字符的非法片段
     clean = [p for p in ipa_parts
@@ -168,6 +193,7 @@ def text_to_ipa(classical: str, system_id: Optional[str] = None) -> AncientResul
         unknown=unknown,
         system_id=None if mode == "legacy" else mode,
         characters=chars,
+        selections=tuple(selections),
     )
 
 

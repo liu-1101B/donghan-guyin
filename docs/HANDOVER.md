@@ -10,7 +10,7 @@
 - 仓库根：`donghan-guyin/`，当前根目录检出的是 **`main`**
 - 本分支的工作树：**`donghan-guyin/.wt-feat-phon/`** ← 所有开发都在这里
 - 分支：`feat/historical-phonology-foundation`
-- 状态：**领先 `origin` 81 个提交，全部本地未推送**（没有推送凭据，**不要推送**）
+- 状态：**领先 `origin` 82 个提交，全部本地未推送**（没有推送凭据，**不要推送**）
 - 工作区约定：`run_feat_tests.py`（工作树根，未跟踪，测试运行器，**保留**）
 
 ## 二、运行环境（照抄即可）
@@ -28,7 +28,7 @@ $env:PYTHONUTF8 = "1"; $env:PYTHONIOENCODING = "utf-8"
 |---|---|---|
 | `.libs_guyun2` | numpy 2.5.4、scipy 1.18.1 | 2026-10-30 重建的数值栈（原因见坑 1） |
 | `.libs_pyarrow17` | pyarrow 17.0.0 | 仅测试约定用；app 本身用 `.libs_guyun` 里的 pyarrow 26 |
-| `.libs_guyun` | 其余全部：streamlit 1.66.1、pandas 3.1.0、pyarrow 26.0.0、pypinyin、edge_tts、gTTS、qieyun、vosk、sherpa_onnx、altair、networkx 2.5.1（已打补丁）等 | 主依赖栈 |
+| `.libs_guyun` | 其余全部：streamlit 1.66.1、pandas 3.1.0、pyarrow 26.0.0、pypinyin 0.55.0、jieba 0.42.1（sdist 手工解压）、edge_tts、gTTS、qieyun、vosk、sherpa_onnx、altair、networkx 2.5.1（已打补丁）等 | 主依赖栈 |
 
 依赖安装一律走 `pip_safe.py`（沙箱 0o700 问题），缓存 `--cache-dir .pip_cache`。
 
@@ -50,7 +50,7 @@ $env:PYTHONUTF8 = "1"; $env:PYTHONIOENCODING = "utf-8"
    它们是死重量，`import numpy/scipy` 永远解析到 `.libs_guyun2`，不要试图再删，
    也不要让 `.libs_guyun` 排在 `.libs_guyun2` 前面。
 4. **跑测试要用工作树根的 `run_feat_tests.py`**（现跑 `test_historical_phonology.py`
-   + `test_llm_provider.py`，132 项全绿；robot 冒烟 `tests/test_robot_app_smoke.py`
+   + `test_llm_provider.py`，154 项全绿；robot 冒烟 `tests/test_robot_app_smoke.py`
    不在其中，要单独跑）
    原生 `python -m unittest` 会有 5 项假失败——沙箱拒绝写入 `tempfile.mkdtemp()`
    创建的 `0o700` 目录，该脚本把 `0o700` 重映射为 `0o707`。
@@ -181,11 +181,62 @@ $env:PYTHONUTF8 = "1"; $env:PYTHONIOENCODING = "utf-8"
   （worker 桩加 `allow_llm_translate` 形参，并断言新 payload 字段）；
   `scripts/smoke_app.py` 6 个 selectbox 正常。
 
+### 第四阶段 ③ ✅ 已完成（多音字词级选音，单提交）
+
+- 新模块 `language/polyphone.py`（jieba 0.42.1 + pypinyin 0.55 + 经验地位映射）：
+  - `select_reading(character, context, system_id, word=None)` → `ReadingSelection`
+    （character/traditional/system_id/selected/candidates/word/modern_tone/
+    tone_class/positions/method/note）。method 五态：`single` / `empirical` /
+    `fallback_first` / `suspect_only` / `no_records`。
+  - **选音算法（纯经验，IPA 永远来自学者表本身，绝不编造）**：
+    1. jieba 对 context 分词，取包含目标字的词（`text_to_ipa` 预切一次逐字映射，
+       避免 O(n²)）；
+    2. pypinyin（词级多音字消歧，`Style.TONE3`）给现代声调 1–4 → 中古调类
+       （1/2→{平}，3→{上,入}，4→{去,入}，`MODERN_TO_TONE_CLASS`）；
+    3. 取该字广韵音韵地位（`lookup_qieyun_positions` +
+       `parse_position_description`），只保留属该调类的地位；
+    4. **经验映射**（每体系懒加载 + lru_cache，`_empirical_votes`）：对同时出现在
+       广韵表与学者表中、且学者表恰一条非 suspect 带 IPA 行的「无歧义字」，按
+       (地位去声调) → (字,声调,IPA) 投票。确认规则：本调类内投票一致 → 取该值；
+       否则全体（任意调）投票一致才取。不一致不产生确认值。
+    5. 确认值须与该字非 suspect 行中**恰好一个** distinct IPA 相等 → 选中该行
+       （`empirical`）；
+    6. 否则不可判定 → 首条非 suspect 行（`fallback_first`），note 逐条写明卡因
+       （声调不可判定 / 广韵无属该调类地位 / 无一致读法 / 一致读法与各行均不符），
+       **不猜测**。
+  - 依赖缺失诚实降级：无 jieba→逐字 + 标注；无 pypinyin→声调不可判定直接
+    fallback；无 opencc→繁简退化为原字。
+- `language/ancient_tts.py`：
+  - `text_to_ipa(classical, system_id=None, context=None)`：学者体系下逐字改走
+    `select_reading`；新增 `context` 形参（缺省用 classical 自身）。
+  - `AncientResult.selections: tuple`（默认 `()`）：多音字选音明细
+    `(字, IPA 或 None, method, note)`，仅 ≥2 条非 suspect 行时出现。
+  - **旧路径（legacy）与单行字行为完全不变**（已钉测试全绿）。
+- **实测钉住的案例（wangli_mc 除非另注）**：
+  - `empirical`：解(解说)→`kai`（見開佳上，同类字佳/懈一致读）、土(率土)→`tʰu`
+    （透模上）、好(好人)→`hɑu`（曉豪上，蒿一致读）、行(行走, **karlgren_mc**)→`ɣɐŋ`
+    （匣開二庚平，杏一致读）。
+  - `fallback_first`：行(银行/行走, wangli)→`ɣɑŋ`（庚类投票不一致 杏ɣɐŋ/垎ɣɐk）、
+    中(中国/打中)→`ȶǐuŋ`（一致读 ȶǐuk 与各行 ȶǐuŋ 不符）、率(率领)→`ʃwi`
+    （无投票字）、好(喜好)→`hɑu`（广韵只有豪上，无去/入地位）。
+  - `single`：東→`tuŋ`、银(简)→`ŋǐěn`（s2t 查 銀，显示原字）。
+  - `no_records`：龘。
+- **依赖坑（新）**：
+  1. **jieba 0.42.1** 装在 `.libs_guyun\jieba`。PyPI 镜像上的 `jieba==0.21` 是
+     Python 2 毒包，**勿装**；0.42.1 用 sdist 手工解压（无 setuptools，不能 pip
+     build）。首次 `jieba.cut` 建词表 ~0.3–1s（缓存在 `Temp\jieba.cache`）。
+  2. **pypinyin 0.55.0 API 已改名**：`from pypinyin import pinyin, Style`
+     （旧函数名 `pypinyin` 已不存在，import 会 `ImportError`）；`pinyin(word,
+     style=Style.TONE3)` 返回逐字 list-of-lists，声调为结尾数字。
+- 测试：`PolyphoneSelectionTests` 22 项（基础 6 + empirical 4 + fallback 5 +
+  映射/接线 7）；`run_feat_tests.py` **154 项全绿**（132+22）；robot 冒烟 3 项全绿；
+  `scripts/smoke_app.py` 6 个 selectbox 正常。
+
 ### 下一阶段（第四阶段余下，用户已定顺序）
 
 - ✅ ① 一句话多时期音频对照（东汉 / 中古 / 现代同句三版）——已完成；
 - ✅ ② 翻译层词典未命中时接 LLM（宁可不答不编造，标注 dict vs LLM）——已完成；
-- ③ 多音字按词切分选音；
+- ✅ ③ 多音字按词切分选音——已完成（jieba + pypinyin + 经验地位映射，见上）；
 - Jetson 真机链路回归清单（见 v5-goal.md 第五阶段）。
 
 ## 四、已验证可用的能力（2026-10-30 实测）
@@ -196,6 +247,7 @@ $env:PYTHONUTF8 = "1"; $env:PYTHONIOENCODING = "utf-8"
 | 词典未命中 LLM 补译（opt-in，标注来源） | ✅ `allow_llm_translate`，回答恒不编造 |
 | 东汉音 IPA（703 字，legacy 路径） | ✅ |
 | 11 家学者拟音逐字合成 | ✅ eSpeak 出声，双列对照 UI |
+| 多音字词级选音（学者体系，标注 dict vs 经验回退） | ✅ `language/polyphone.py`，empirical/fallback_first 双态 + 卡因说明 |
 | 东汉→中古音类对应表 | ✅ 493/703 锚定，526 对，30 母/58 韵粒度，`scripts/correspondence_report.py` |
 | 古韵合成 eSpeak | ✅ 32540 采样点 / 1.48s |
 | Edge TTS 现代朗读 | ✅ MP3 |
