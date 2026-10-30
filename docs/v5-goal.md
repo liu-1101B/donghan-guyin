@@ -33,8 +33,15 @@
 > ASR 闭环实测：Edge TTS 合成「今天天气真好，我和朋友一起去河边散步」→
 > miniaudio 解码为 16 kHz WAV → SenseVoice 识别为
 > 「今天天气真好，我和朋友一起去河边散步。」（逐字正确，自动补标点）。
-> `available_backends()` 返回 `['sensevoice']`，后端自动选中 SenseVoice。
-> Vosk 兜底模型仍在后台下载（不影响使用）。
+> `available_backends()` 返回 `['sensevoice', 'vosk']`，`pick_backend('auto')`
+> 自动选中 SenseVoice。Vosk 兜底也已下载并就绪，实测同一段音频：
+>
+> | 后端 | 结果 |
+> |---|---|
+> | SenseVoice | `今天天气真好，我和朋友一起去河边散步。`（带标点） |
+> | Vosk | `今天 天气 真好 我 和 朋友 一起去 河边 散步`（无标点、空格断词） |
+>
+> 差别与 `services/asr_client.py` 文件头的说明一致，故默认仍用 SenseVoice。
 
 ## 当前已知缺口
 
