@@ -12,7 +12,8 @@ from language.history import (TIMELINE, get_period, get_system, lookup_reading,
                               dataset_available, lookup_sinica_ccr_records,
                               sinica_ccr_record_count, sinica_ccr_package_counts,
                               lookup_scholar_reading, scholar_character_count,
-                              scholar_coverage, SCHOLAR_SYSTEMS)
+                              scholar_coverage, SCHOLAR_SYSTEMS,
+                               SCHOLAR_SYSTEMS_OLD)
 
 
 class SinicaScholarSystemsTests(unittest.TestCase):
@@ -312,6 +313,116 @@ class SinicaCCRDataTests(unittest.TestCase):
         missing = Path(self.temp_dir.name) / "missing.jsonl.gz"
         with self.assertRaisesRegex(FileNotFoundError, "Extract sinica_ccr_records"):
             lookup_sinica_ccr_records("東", path=str(missing))
+
+
+class SinicaScholarOldChineseTests(unittest.TestCase):
+    """五个上古（先秦）学者方案共用的契约。"""
+
+    def test_all_five_old_systems_are_registered_and_queryable(self):
+        self.assertEqual(len(SCHOLAR_SYSTEMS_OLD), 5)
+        for system_id in SCHOLAR_SYSTEMS_OLD:
+            reading = lookup_reading("東", system_id)
+            self.assertTrue(reading.available, system_id)
+            self.assertEqual(reading.source_status, "scholar_reconstruction", system_id)
+
+    def test_old_systems_appear_in_old_chinese_filter_only(self):
+        ids = {s.id for s in systems_for_period("old_chinese",
+                                                include_metadata_only=False)}
+        for system_id in SCHOLAR_SYSTEMS_OLD:
+            self.assertIn(system_id, ids)
+
+    def test_east_ipa_matches_upstream_sheets(self):
+        # 001–005 先秦表的 東：t+uŋ / t+ɔŋ / t+ûŋ / t+ewŋ / t+ung
+        # 上游「û」按分解形式存储（u + U+0302），断言用显式码点，不重编码
+        self.assertEqual(lookup_reading("東", "karlgren_oc").ipa, "tu\u014b")
+        self.assertEqual(lookup_reading("東", "wangli_oc").ipa, "t\u0254\u014b")
+        self.assertEqual(lookup_reading("東", "dongtonghe_oc").ipa, "tu\u0302\u014b")
+        self.assertEqual(lookup_reading("東", "zhoufagao_oc").ipa, "tewŋ")
+        self.assertEqual(lookup_reading("東", "lifanggui_oc").ipa, "tung")
+
+    def test_rhyme_group_carried_through(self):
+        for system_id in ("wangli_oc", "dongtonghe_oc", "zhoufagao_oc", "lifanggui_oc"):
+            self.assertEqual(lookup_reading("東", system_id).rhyme_group, "東")
+        # 001 高本漢表没有「韻部」栏
+        self.assertIsNone(lookup_reading("東", "karlgren_oc").rhyme_group)
+
+    def test_no_old_system_invents_a_tone(self):
+        for system_id in SCHOLAR_SYSTEMS_OLD:
+            self.assertIsNone(lookup_reading("東", system_id).tone, system_id)
+
+    def test_systems_disagree_on_rong(self):
+        # 同一个「融」，各家拟音不该被折叠；高本漢先秦表无此字（报缺）
+        values = {lookup_reading("融", sid).ipa for sid in SCHOLAR_SYSTEMS_OLD
+                  if lookup_reading("融", sid).available}
+        self.assertGreaterEqual(len(values), 4)
+        self.assertEqual(
+            lookup_reading("融", "karlgren_oc").source_status, "missing_character")
+        for system_id in ("dongtonghe_oc", "zhoufagao_oc", "lifanggui_oc"):
+            self.assertEqual(len(lookup_scholar_reading("融", system_id)), 2)
+
+    def test_zero_initial_marks_compose_as_no_onset(self):
+        # 王力表用 "0"，李方桂表用 U+0387（点）；都按无辅音处理
+        wangli = lookup_reading("翁", "wangli_oc")
+        self.assertEqual(wangli.initial, "0")
+        self.assertEqual(wangli.ipa, "ɔŋ")
+        self.assertFalse(lookup_scholar_reading("翁", "wangli_oc")[0].has_initial)
+        lifanggui = lookup_reading("翁", "lifanggui_oc")
+        self.assertEqual(lifanggui.initial, "\u0387")
+        self.assertEqual(lifanggui.ipa, "ung")
+        self.assertFalse(lifanggui.ipa.startswith("\u0387"))
+
+    def test_zero_initial_with_glide_keeps_the_glide(self):
+        # 委（李方桂）= ·w + jər → wjər，介音 w 不能丢
+        reading = lookup_reading("委", "lifanggui_oc")
+        self.assertTrue(reading.ipa.startswith("w"))
+        self.assertIn(reading.ipa, {"wjər", "wjərx"})
+        self.assertTrue(lookup_scholar_reading("委", "lifanggui_oc")[0].has_initial)
+
+    def test_html_entity_initials_are_decoded(self):
+        # '&#609' → ȡ（高本漢 異），'&#611' → ȣ（董同龢 囩）
+        self.assertEqual(lookup_reading("異", "karlgren_oc").initial, "\u0261")
+        self.assertEqual(lookup_reading("囩", "dongtonghe_oc").initial, "\u0263")
+
+    def test_fullwidth_initial_is_normalized(self):
+        # 王力表 屁 的聲母上游误写为全角 ｐ，机械还原为 p；
+        # 韻母「ǐ」按分解形式存储（i + U+030C），不重编码
+        reading = lookup_reading("屁", "wangli_oc")
+        self.assertEqual(reading.initial, "p")
+        self.assertEqual(reading.ipa, "pi\u030cei")
+
+    def test_upstream_note_preserved_verbatim(self):
+        records = lookup_scholar_reading("美", "lifanggui_oc")
+        self.assertTrue(records)
+        self.assertTrue(any("脂韻重紐" in r.upstream_note for r in records))
+
+    def test_suspect_counts_per_old_system(self):
+        # 高本漢 8 行只剩送氣符；王力 4 行聲母列填了韻部名 + 4 行填了韻母值；
+        # 其余三家无错位
+        self.assertEqual(scholar_coverage("karlgren_oc")["skipped_suspect_initial"], 8)
+        self.assertEqual(scholar_coverage("wangli_oc")["skipped_suspect_initial"], 8)
+        self.assertEqual(scholar_coverage("dongtonghe_oc")["skipped_suspect_initial"], 0)
+        self.assertEqual(scholar_coverage("zhoufagao_oc")["skipped_suspect_initial"], 0)
+        self.assertEqual(scholar_coverage("lifanggui_oc")["skipped_suspect_initial"], 0)
+
+    def test_karlgren_empty_finals_are_counted_not_dropped(self):
+        # 530 行韻母为空 + 5 行「?」= 535，全部计入并如实暴露
+        cov = scholar_coverage("karlgren_oc")
+        self.assertEqual(cov["skipped_empty_final"], 535)
+        self.assertEqual(cov["matched_records"],
+                         cov["records"] + cov["skipped_not_single_char"]
+                         + cov["skipped_empty_final"])
+        # 中 在高本漢先秦表两条记录韻母皆空 → 该体系报「缺」，不编造
+        self.assertEqual(lookup_reading("中", "karlgren_oc").source_status,
+                         "missing_character")
+        self.assertTrue(lookup_reading("中", "wangli_oc").available)
+
+    def test_defect_and_entity_rows_are_counted(self):
+        self.assertEqual(scholar_coverage("karlgren_oc")["entity_decoded"], 2)
+        self.assertEqual(scholar_coverage("dongtonghe_oc")["entity_decoded"], 2)
+        self.assertEqual(scholar_coverage("wangli_oc")["zero_initial"], 374)
+        self.assertEqual(scholar_coverage("lifanggui_oc")["zero_initial"], 465)
+        self.assertEqual(scholar_coverage("lifanggui_oc")["glide_onset"], 153)
+        self.assertEqual(scholar_coverage("lifanggui_oc")["upstream_note_rows"], 96)
 
 
 if __name__ == "__main__":

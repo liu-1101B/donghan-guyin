@@ -117,6 +117,45 @@ SYSTEMS = (
         notes=("数据来自中央研究院漢字構形資料庫「014 隋唐_擬音_王力系統.xlsx」"
                "（PDM），已随仓库打包。上游**无聲調字段**，本项目不补全；"
                "聲母 0 表示零聲母。能否直接送合成器属第三阶段音素能力矩阵的问题。")),
+    ReconstructionSystem("karlgren_oc", "上古音构拟（高本汉）", "Bernhard Karlgren",
+        ("old_chinese",),
+        "高本漢先秦音构拟，逐字给出聲母与韻母片段（该表无韻部栏）。",
+        status="integrated_dataset",
+        source_url="https://xiaoxue.iis.sinica.edu.tw/ccrdata/",
+        notes=("Sinica「001 先秦_高本漢系統.xlsx」（PDM），7,527 行；上游无聲調字段。"
+               "530 行韻母空缺、5 行聲母韻母均標「?」（按空缺跳过并计数）；"
+               "8 行聲母只剩送氣符（標記為缺陷，不給 IPA）；"
+               "2 行聲母為 HTML 實體文本（已機械解碼）。")),
+    ReconstructionSystem("wangli_oc", "上古音构拟（王力）", "王力",
+        ("old_chinese",),
+        "王力《漢語史稿》系先秦音构拟，逐字给出韻部、聲母与韻母片段。",
+        status="integrated_dataset",
+        source_url="https://xiaoxue.iis.sinica.edu.tw/ccrdata/",
+        notes=("Sinica「002 先秦_王力系統.xlsx」（PDM），6,964 行；上游无聲調字段。"
+               "聲母 0 表示零聲母；韻母可能帶「ǐ」前綴（表上聲），屬上游記音不改寫。"
+               "8 行聲母列錯位（韻母值或韻部名填入聲母列，標記為缺陷）。")),
+    ReconstructionSystem("dongtonghe_oc", "上古音构拟（董同龢）", "董同龢",
+        ("old_chinese",),
+        "董同龢先秦音构拟，逐字给出韻部、聲母与韻母片段。",
+        status="integrated_dataset",
+        source_url="https://xiaoxue.iis.sinica.edu.tw/ccrdata/",
+        notes=("Sinica「003 先秦_董同龢系統.xlsx」（PDM），11,124 行；上游无聲調字段。"
+               "2 行聲母為 HTML 實體文本（&#611，已機械解碼為 ȣ）。")),
+    ReconstructionSystem("zhoufagao_oc", "上古音构拟（周法高）", "周法高",
+        ("old_chinese",),
+        "周法高先秦音构拟，逐字给出韻部、聲母与韻母片段。",
+        status="integrated_dataset",
+        source_url="https://xiaoxue.iis.sinica.edu.tw/ccrdata/",
+        notes=("Sinica「004 先秦_周法高系統.xlsx」（PDM），12,862 行；上游无聲調字段。"
+               "33 行聲母留空（零聲母，合法）。")),
+    ReconstructionSystem("lifanggui_oc", "上古音构拟（李方桂）", "李方桂",
+        ("old_chinese",),
+        "李方桂先秦音构拟，逐字给出韻部、聲母与韻母片段。",
+        status="integrated_dataset",
+        source_url="https://xiaoxue.iis.sinica.edu.tw/ccrdata/",
+        notes=("Sinica「005 先秦_李方桂系統.xlsx」（PDM），11,167 行；上游无聲調字段。"
+               "零聲母以 U+0387（希臘 anoteleia 点）標記，点后可帶介音（如「·w」）；"
+               "97 行帶備註（原注/考訂），隨記錄保留不改寫。")),
     ReconstructionSystem("zhengzhang_mc", "中古音构拟（郑张尚芳）", "郑张尚芳",
         ("middle_chinese", "late_middle_chinese"),
         "中古音参考体系；当前仅登记元数据。",

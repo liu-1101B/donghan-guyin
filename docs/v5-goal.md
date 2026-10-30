@@ -20,7 +20,7 @@
 | 阶段 | 现有落点 |
 |---|---|
 | 一 | `language/history/timeline.py`、`systems.py` |
-| 二 | `language/history/{qieyun,phono_ml,zhongyuan,sinica_ccr}_data.py`、`data/historical/`、`scripts/import_sinica_ccr.py` |
+| 二 | `language/history/{qieyun,phono_ml,zhongyuan,sinica_ccr,sinica_scholar}_data.py`、`data/historical/`、`scripts/import_sinica_ccr.py` |
 | 三 | `language/ancient_tts.py`、`sound_synth.py`、`packaging/download_espeak.py` |
 | 四 | `services/llm_client.py`、`language/classical_translator.py`、`language/turn_engine.py`、`language/style_prompt.py` |
 | 五 | `robot/`（`app.py`、`recorder.py`、`windows_audio.py`、`audio_io.py`、`session.py`）、`components/hold_to_record/` |
@@ -60,7 +60,7 @@
 
 ## 第二阶段：古音资料库
 
-**现状（已接入 5 套实数据，共 379 万+ 条）**
+**现状（已接入 6 套实数据，Sinica CCR 共 378214 条）**
 
 | 数据 | 条目 | 许可/来源 | 接口 |
 |---|---|---|---|
@@ -69,21 +69,32 @@
 | 中原音韵（5 家拟音） | 5000+ | 见 `data/historical/README.md` | `lookup_zhongyuan` |
 | 中研院汉字构形库（含东汉韵部） | 378214 | PDM（Sinica CCR） | `lookup_sinica_ccr_records` |
 | **六家中古学者拟音** | 137428 | PDM（Sinica CCR 隋唐各表） | `lookup_reading(ch, "wangli_mc")` 等 |
+| **五家上古学者拟音** | 56169 | PDM（Sinica CCR 先秦各表） | `lookup_reading(ch, "wangli_oc")` 等 |
 
 **差距（关键）**
 
-曾经是 14 个注册体系里 **0 个能产出可合成 IPA**。2026-10-30 打通了六个：
+曾经是 14 个注册体系里 **0 个能产出可合成 IPA**。2026-10-30 打通了六个中古、五个上古：
 
-| 体系 | 字数 | 记录 | 错位行 | 東 | 融 |
+| 体系 | 字数 | 记录 | 缺陷行 | 東 | 融 |
 |---|---|---|---|---|---|
 | `wangli_mc` 王力 | 19523 | 25508 | 13 | `tuŋ` | `jǐuŋ` |
 | `dongtonghe_mc` 董同龢 | 19534 | 25515 | 0 | `tuŋ` | `juŋ` |
 | `zhoufagao_mc` 周法高 | 19534 | 25513 | 5 | `tuŋ` | `iuŋ` |
 | `lifanggui_mc` 李方桂 | 19529 | 25507 | 0 | `tung` | `jiung` |
 | `chenxinxiong_mc` 陈新雄 | 19477 | 25409 | 0 | `toŋ` | `ǐoŋ` |
-| `karlgren_mc` 高本汉 | 6471 | 7673 | 0 | `tuŋ` | `i̯uŋ` |
+| `karlgren_mc` 高本汉 | 6471 | 7673 | 1 | `tuŋ` | `i̯uŋ` |
 
-同一个「融」六家给出六个值 —— 这就是各体系不可混用的直接证据。
+同日又打通了五个上古（先秦）：
+
+| 体系 | 字数 | 记录 | 缺陷行 | 空韻母 | 韻部 | 東 | 融 |
+|---|---|---|---|---|---|---|---|
+| `karlgren_oc` 高本漢 | 5912 | 6992 | 8 | 535 | — | `tuŋ` | 缺 |
+| `wangli_oc` 王力 | 6329 | 6961 | 8 | 3 | 30 | `tɔŋ` | `ʎǐuŋ` |
+| `dongtonghe_oc` 董同龢 | 8948 | 11120 | 0 | 3 | 23 | `tûŋ` | `djoŋ` |
+| `zhoufagao_oc` 周法高 | 10219 | 12849 | 0 | 13 | 31 | `tewŋ` | `riəwŋ` |
+| `lifanggui_oc` 李方桂 | 9001 | 11160 | 0 | 6 | 23 | `tung` | `rəngw` |
+
+同一个「融」在中古六家给出六个值；上古四家有值、四个值（高本漢先秦表无此字，接口报缺）—— 各体系不可混用的直接证据。
 
 仍未接入（`not_integrated`）：郑张尚芳上古、白一平—沙加尔上古、郑张尚芳中古、
 现代普通话；另有 `guangyun_qieyun_position`、`phono_ml_*`、`zhongyuan_*` 属
@@ -91,22 +102,28 @@
 
 接入细节（`language/history/sinica_scholar_data.py`）：
 
-- 来源：Sinica 汉字构形资料库「隋唐_擬音_*.xlsx」六份，已随仓库打包，PDM
+- 来源：Sinica 汉字构形资料库「隋唐_擬音_*.xlsx」六份 +「先秦」五份（001 高本漢—005 李方桂），已随仓库打包，PDM
 - **上游没有声调字段**，接口 `tone` 恒为 `None`，绝不补全
 - 源表 18 行错位（王力 13、周法高 5，聲母列填了韵母值），标记
   `source_record_defect` 且不给 IPA
 - **李方桂用 `ji-` 表示喻母**，属合法声母；判据必须是「以元音开头」而非
   「含元音」，否则会误判该体系 974 行
-- `scripts/coverage_report.py --all` 出横向对比，单体系报告含跳过原因
+- 上古专项（同一模块 `sinica_scholar_data.py`，按 dataset 分发）：
+  - 先秦表多一列「韻部」（001 高本漢表没有，接口报缺）；006/007 兩漢表非拟音，不接入
+  - 零声母：王力 `0`（374 行）、李方桂「·」（U+0387，465 行）；点后可带介音 `·w`（153 行，如 委 → `wjər`）
+  - 上游缺陷机械修复：高本漢/董同龢 `&#609`/`&#611` → ȡ/ȣ（4 行）、王力全角 `ｐ` → `p`（1 行），均计数留痕
+  - 缺陷行 8+8+0+0+0（高本漢只剩送气符、王力声母列填韵部名/韵母值），保留并报 `source_record_defect`
+  - 高本漢 535 行空韻母（530 空 + 5「?」）全部计数、查无即报缺，不静默删
+  - 李方桂備註 96 行逐字保留为 `upstream_note`
+- `scripts/coverage_report.py --all` 出 11 体系横向对比（中古+上古），单体系报告含跳过原因、韻部与備註样本
 
 仍未解决的：**「拟音表 → 发音」这一段还没接**（第三阶段）。
 
 **下一步**
 
-1. 把 Sinica 里剩余的上古方案（先秦各学者，56169 条）也接进来，
-   注意上古表多一个「韻部」字段、没有韻母，结构与中古不同；
-2. 为「争议项」建对照视图：同一个字在六家方案下的差异（`融` 已是现成例子）；
-3. 覆盖率报告已就绪，可直接接到 UI。
+1. 上古方案接入 —— **已完成**（先秦五表，见上表；56169 条全部计数）；
+2. 为「争议项」建对照视图：同一个字在各家方案下的差异（`融` 已是现成例子）；
+3. 覆盖率报告已就绪（11 体系），可直接接到 UI。
 
 ---
 
