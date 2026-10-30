@@ -141,6 +141,11 @@ def _extract_json(raw: str, original_text: str) -> dict:
             }
     except Exception:
         pass
+    # 解析失败时不能把残缺 JSON 当回答返回：截断的输出会长这样
+    # {"translation": "今日天朗，与友步于河滨。", "reply": "风和日暖，临水
+    # 直接当 reply 用的话，界面会显示一段半截 JSON。让调用方走回退。
+    if raw.startswith("{"):
+        raise ValueError("模型返回的 JSON 不完整（可能被 max_tokens 截断）")
     return {"translation": simple_translate(original_text), "reply": raw,
             "reply_modern": ""}
 
@@ -173,12 +178,13 @@ def _trust_env_for_endpoint(base: str) -> bool:
     return True
 
 
-def _call_chat(base: str, model: str, text: str, history, key="", timeout=120.0):
+def _call_chat(base: str, model: str, text: str, history, key="", timeout=120.0,
+               max_tokens=2048):
     headers = {"Content-Type": "application/json"}
     if key:
         headers["Authorization"] = f"Bearer {key}"
     payload = {"messages": _build_messages(text, history),
-               "temperature": 0.7, "max_tokens": 300}
+               "temperature": 0.7, "max_tokens": max_tokens}
     if model:
         payload["model"] = model
     # Local/LAN inference should not accidentally go via the user's public proxy.
@@ -188,7 +194,20 @@ def _call_chat(base: str, model: str, text: str, history, key="", timeout=120.0)
     r = httpx.post(f"{base}/chat/completions", headers=headers,
                    json=payload, timeout=timeout_cfg, trust_env=trust_env)
     r.raise_for_status()
-    content = r.json()["choices"][0]["message"]["content"]
+    data = r.json()
+    choice = (data.get("choices") or [{}])[0]
+    message = choice.get("message") or {}
+    content = message.get("content") or ""
+    finish = choice.get("finish_reason")
+
+    # 推理模型（如 deepseek-flash）会先写 reasoning_content，正文排在后面。
+    # max_tokens 太小的话推理就把额度吃光，正文被截断甚至为空。
+    if finish == "length":
+        reasoning = len(message.get("reasoning_content") or "")
+        raise RuntimeError(
+            f"输出被截断：max_tokens={max_tokens}，其中推理内容 {reasoning} 字")
+    if not content.strip():
+        raise RuntimeError("模型返回空内容")
     return _extract_json(content, text)
 
 
@@ -208,12 +227,19 @@ def generate_turn(text: str, history=None, mode: str = None) -> dict:
         if not API_KEY:
             _safe_log("[llm] 当前选择大模型 API 模式，但未配置 LLM_API_KEY；改用本地词典")
         else:
-            try:
-                out = _call_chat(LLM_BASE, LLM_MODEL, text, history,
-                                 key=API_KEY, timeout=60.0)
-                out["source"] = "cloud"
-            except Exception as e:
-                _safe_log(f"[llm] 云端 API 调用失败，改用本地词典：{e.__class__.__name__}")
+            # 推理模型可能把首轮 token 全花在 reasoning 上，截断时加预算重试一次
+            for budget in (2048, 4096):
+                try:
+                    out = _call_chat(LLM_BASE, LLM_MODEL, text, history,
+                                     key=API_KEY, timeout=60.0, max_tokens=budget)
+                    out["source"] = "cloud"
+                    break
+                except Exception as e:
+                    detail = f"{e.__class__.__name__}: {e}"
+                    if budget == 2048 and "截断" in str(e):
+                        _safe_log(f"[llm] {detail}；用更大 max_tokens 重试")
+                        continue
+                    _safe_log(f"[llm] 云端 API 调用失败，改用本地词典：{detail}")
 
     if out is None:
         out = _local_fallback(text)
