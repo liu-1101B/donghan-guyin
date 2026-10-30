@@ -16,7 +16,7 @@
 
 - language/history/timeline.py：时期模型、年份查询、重叠时期处理。
 - language/history/systems.py：拟音体系注册表，区分旧字表适配与仅登记元数据。
-- language/history/reconstruction.py：统一逐字查询；未接入体系明确返回不可用，不猜测 IPA。
+- language/history/reconstruction.py：统一逐字查询；未接入体系明确返回不可用，不猜测 IPA；`compare_character` 提供同字跨体系对照（值类型三分、缺失显式报缺）。
 - language/history/qieyun_data.py：查询随仓库提供的《广韵》反切音韵地位表，保留同字多条小韵记录。
 - data/historical/guangyun_positions.csv：来自 nk2028/tshet-uinh-data 的 CC0 1.0 数据副本；许可与上游内容 blob SHA 记录在 data/historical/README.md。
 - language/history/provenance.py：来源、版本、页码/条目、推导规则、置信度等证据字段。
@@ -105,13 +105,33 @@
 - 高本漢 535 行空韻母（530 空 + 5「?」）全部计数；查无该字报
   `missing_character`（如「融」「中」在其先秦表缺席）。
 
+## 同字跨体系对照与 UI 覆盖表
+
+`compare_character(character, period_id)` 返回 `CharacterComparison`：按时期注册表
+顺序，每个体系一行 `SystemComparisonRow`（值 / 值类型 / 韻部 / 状态 / 上游備註 / 说明）。
+
+- 值类型三分，不混用：`ipa`（学者拟音 IPA 与东汉实验字表）、`transcription`
+  （PHONO-ML 与《中原音韵》转写，不是 IPA）、`position`（《广韵》反切音韵地位，不是 IPA）。
+- 缺失、缺陷、未接入的体系保留为空值行并带显式 `source_status`
+  （`missing_character` / `source_record_defect` / `not_integrated` 等），不用别家值补。
+- 多音字：所有记录的读值并排保留；界面把重复值折叠显示为 `v ×n`，不丢条数。
+- 参数契约：非单字字符抛 `ValueError`，未知时期抛 `KeyError`（复用 `get_period`）。
+
+UI（`guyun_app.py`）「🔀 同字跨体系对照（争议项）」展开器：选时期 + 字符（默认 `融`），
+输出对照表与差异摘要（是否一致、不同值个数、无记录体系名单），并附所选时期各体系的
+覆盖表（字数 / 记录 / 缺陷行 / 空韻母 / 韻部数 / 備註行 / 零声母行；非逐字拟音数据集
+以「—」占位并说明）。
+
+测试：`CompareCharacterTests`（6 项）锁定上述契约，含高本漢先秦表「融」缺席、中古六家
+六值不可折叠、东汉实验字表行存在、未知字全体系报缺。
+
 ## 下一步实施顺序
 
 1. 盘点 phonology_db.py，为条目补来源/版本/推导规则，同时保留旧字段兼容。
-2. 已完成第一套 CC0《广韵》音韵地位资料、六家中古学者拟音与五家上古（先秦）学者拟音接入，`scripts/coverage_report.py --all` 出 11 体系覆盖率报告。
+2. 已完成第一套 CC0《广韵》音韵地位资料、六家中古学者拟音与五家上古（先秦）学者拟音接入，`scripts/coverage_report.py --all` 出 11 体系覆盖率报告；同字跨体系对照视图与 UI 覆盖表已接入（`compare_character`）。
 3. 为多音字增加词级上下文选择，不以单字查表代替词汇读音。
 4. 为音素到 TTS 的映射建立能力矩阵；拟音可信度与合成器能力分别报告。
-5. 最后把时间轴和体系选择接入 Streamlit UI；UI 不应先于数据契约。
+5. 时间轴与体系选择已接入 Streamlit UI（探索器 + 同字跨体系对照 + 覆盖表）；后续「拟音表 → 发音」的接入仍须先于 UI，UI 不先于数据契约。
 
 ## 测试
 

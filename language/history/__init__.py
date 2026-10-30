@@ -1,7 +1,10 @@
 """Historical Chinese phonology primitives."""
 from .timeline import HistoricalPeriod, TIMELINE, get_period, period_at
 from .systems import ReconstructionSystem, SYSTEMS, get_system, systems_for_period
-from .reconstruction import Reading, lookup_reading
+from .reconstruction import (
+    Reading, lookup_reading,
+    CharacterComparison, SystemComparisonRow, compare_character,
+)
 from .phono_ml_data import PhonoMLRecord, lookup_phono_ml, phono_ml_record_count
 from .zhongyuan_data import ZhongyuanRecord, lookup_zhongyuan, zhongyuan_record_count
 from .sinica_ccr_data import (
@@ -21,6 +24,7 @@ __all__ = [
     "HistoricalPeriod", "TIMELINE", "get_period", "period_at",
     "ReconstructionSystem", "SYSTEMS", "get_system", "systems_for_period",
     "Reading", "lookup_reading",
+    "CharacterComparison", "SystemComparisonRow", "compare_character",
     "QieyunPositionRecord", "lookup_qieyun_positions", "qieyun_record_count",
     "PhonoMLRecord", "lookup_phono_ml", "phono_ml_record_count",
     "ZhongyuanRecord", "lookup_zhongyuan", "zhongyuan_record_count",

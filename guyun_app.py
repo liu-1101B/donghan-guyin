@@ -441,6 +441,111 @@ with st.expander("🧭 历史音系探索（研究预览）", expanded=False):
                     st.info("该字在所选数据集中没有查到记录。")
 
 
+# ===== 同字跨体系对照（第二阶段②争议项视图 + ③覆盖率进 UI）=====
+with st.expander("🔀 同字跨体系对照（争议项）", expanded=False):
+    from language.history import (
+        compare_character, scholar_coverage,
+        SCHOLAR_SYSTEMS_ALL as SCHOLAR_ALL,
+    )
+
+    st.markdown(
+        "把同一个字在所选时期**全部已接入体系**里的值并排陈列。"
+        "**各体系不可混用**：差异是各方案模型的直接证据；"
+        "缺字、源表缺陷一律如实报出，不用其他体系补值。"
+    )
+    cmp_period_label = st.selectbox(
+        "历史时期", list(period_labels.keys()),
+        key="historical_compare_period",
+    )
+    cmp_period = period_labels[cmp_period_label]
+    cmp_char = st.text_input(
+        "要对照的字", value="融", max_chars=1,
+        key="historical_compare_character",
+    ).strip()
+    if cmp_char:
+        cmp = compare_character(cmp_char, cmp_period)
+        kind_labels = {"ipa": "IPA", "transcription": "转写",
+                       "position": "音韵地位", "none": "—"}
+
+        def _fmt_values(values):
+            """重复值折叠为「v ×n」，条数信息不丢。"""
+            seen, order = {}, []
+            for v in values:
+                if v not in seen:
+                    order.append(v)
+                seen[v] = seen.get(v, 0) + 1
+            return " / ".join(
+                f"{v} ×{seen[v]}" if seen[v] > 1 else v for v in order)
+
+        rows = []
+        for r in cmp.rows:
+            extra = ("；上游備註：" + r.upstream_note) if r.upstream_note else ""
+            rows.append({
+                "体系": f"{r.system_name}（{r.system_id}）",
+                "读音 / 转写": _fmt_values(r.values) if r.values else "—",
+                "值类型": kind_labels[r.value_kind],
+                "韻部": r.rhyme_group or "—",
+                "状态": r.source_status,
+                "说明": (r.note + extra).strip() or "—",
+            })
+        st.dataframe(rows, use_container_width=True, hide_index=True)
+        n_present = len(cmp.system_ids_with_values)
+        if cmp.disagrees:
+            st.markdown(
+                f"**{len(cmp.distinct_values)} 个不同值**（{n_present} 个体系有值）："
+                + " / ".join(f"`{v}`" for v in cmp.distinct_values)
+                + " —— 同一字在各方案下的分歧，各体系不可混用。"
+            )
+        elif n_present:
+            st.markdown(f"{n_present} 个体系有值且一致：`{cmp.distinct_values[0]}`。")
+        else:
+            st.info(f"{cmp_period_label} 的已接入体系里都查不到「{cmp_char}」。")
+        if cmp.system_ids_without_values:
+            missing_names = "、".join(
+                r.system_name for r in cmp.rows if not r.has_value)
+            st.caption("无记录体系：" + missing_names + "（如实报缺，不编造值）。")
+
+        st.markdown("#### 各体系覆盖率（所选时期）")
+        cov_rows = []
+        for system in systems_for_period(cmp_period, include_metadata_only=False):
+            if system.id in SCHOLAR_ALL:
+                c = scholar_coverage(system.id)
+                cov_rows.append({
+                    "体系": system.name,
+                    "字数": c["characters"],
+                    "记录": c["records"],
+                    "缺陷行": c["skipped_suspect_initial"],
+                    "空韻母": c["skipped_empty_final"],
+                    "韻部数": c["rhyme_group_count"],
+                    "備註行": c["upstream_note_rows"],
+                    "零声母行": c["zero_initial"] + c["glide_onset"],
+                    "说明": "",
+                })
+            elif system.id == "han_eastern_experimental":
+                try:
+                    from phonology_db import EASTERN_HAN_DB
+                    n = len(EASTERN_HAN_DB)
+                except ImportError:
+                    n = 0
+                cov_rows.append({
+                    "体系": system.name, "字数": n, "记录": n,
+                    "缺陷行": "—", "空韻母": "—", "韻部数": "—", "備註行": "—",
+                    "零声母行": "—", "说明": "项目旧实验字表，来源未逐字审计",
+                })
+            else:
+                cov_rows.append({
+                    "体系": system.name, "字数": "—", "记录": "—",
+                    "缺陷行": "—", "空韻母": "—", "韻部数": "—", "備註行": "—",
+                    "零声母行": "—",
+                    "说明": "原始资料/转写数据集，非逐字拟音表（见上方探索器）",
+                })
+        st.dataframe(cov_rows, use_container_width=True, hide_index=True)
+        st.caption(
+            "覆盖率口径：缺陷行＝源表声母列错位/缺损（保留但不给 IPA）；"
+            "空韻母＝韵母列为空或「?」（不计入）；零声母行＝上游以 0／· 标记无辅音的行。"
+        )
+
+
 # ===== 中央研究院古今音资料库：独立下载的 PDM 声韵数据 =====
 with st.expander("🏛️ 中央研究院古今音资料库（来源可追溯的原始记录）", expanded=False):
     from language.history.sinica_ccr_data import (

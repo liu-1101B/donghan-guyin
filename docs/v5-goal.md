@@ -116,14 +116,15 @@
   - 高本漢 535 行空韻母（530 空 + 5「?」）全部计数、查无即报缺，不静默删
   - 李方桂備註 96 行逐字保留为 `upstream_note`
 - `scripts/coverage_report.py --all` 出 11 体系横向对比（中古+上古），单体系报告含跳过原因、韻部与備註样本
+- 同字跨体系对照：`compare_character(ch, period)` 对所选时期已注册的每个体系出一行；UI「🔀 同字跨体系对照（争议项）」展开器并排展示各体系差异，并附所选时期覆盖表
 
 仍未解决的：**「拟音表 → 发音」这一段还没接**（第三阶段）。
 
 **下一步**
 
 1. 上古方案接入 —— **已完成**（先秦五表，见上表；56169 条全部计数）；
-2. 为「争议项」建对照视图：同一个字在各家方案下的差异（`融` 已是现成例子）；
-3. 覆盖率报告已就绪（11 体系），可直接接到 UI。
+2. 争议项对照视图 —— **已完成**：`compare_character(ch, period)` 对同一字逐体系出行（值 / 值类型 / 韻部 / 状态 / 说明），IPA、转写、音韵地位三类值严格区分不混用；缺字如实报「缺」，不拿别家值补。UI「🔀 同字跨体系对照（争议项）」展开器（默认字 `融`），多音字全部值并排、重复值折叠为 `v ×n`；
+3. 覆盖率报告接入 UI —— **已完成**：同一展开器内并排所选时期的各体系覆盖表（字数 / 记录 / 缺陷行 / 空韻母 / 韻部数 / 備註行 / 零声母行），口径在表下注明。
 
 ---
 
@@ -207,7 +208,7 @@ def text_to_ipa(classical: str) -> AncientResult:
 
 **现状**
 
-- 测试：`tests/test_historical_phonology.py` 23 项，CI 跑 `compileall` + `unittest`（带路径过滤）
+- 测试：`tests/test_historical_phonology.py` 57 项，CI 跑 `compileall` + `unittest`（带路径过滤）
 - 配置：`config/settings.yaml` + `.env`（界面可写，已入 `.gitignore`）
 - 数据下载：`scripts/download_models.py` 支持 HTTP Range 续传 + 镜像轮换
 - 打包：`packaging/`（v3 PyInstaller + v4 便携包）

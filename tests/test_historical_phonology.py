@@ -13,7 +13,9 @@ from language.history import (TIMELINE, get_period, get_system, lookup_reading,
                               sinica_ccr_record_count, sinica_ccr_package_counts,
                               lookup_scholar_reading, scholar_character_count,
                               scholar_coverage, SCHOLAR_SYSTEMS,
-                               SCHOLAR_SYSTEMS_OLD)
+                               SCHOLAR_SYSTEMS_OLD,
+                               compare_character)
+from phonology_db import EASTERN_HAN_DB
 
 
 class SinicaScholarSystemsTests(unittest.TestCase):
@@ -423,6 +425,82 @@ class SinicaScholarOldChineseTests(unittest.TestCase):
         self.assertEqual(scholar_coverage("lifanggui_oc")["zero_initial"], 465)
         self.assertEqual(scholar_coverage("lifanggui_oc")["glide_onset"], 153)
         self.assertEqual(scholar_coverage("lifanggui_oc")["upstream_note_rows"], 96)
+
+
+
+class CompareCharacterTests(unittest.TestCase):
+    """第二阶段②：同字跨体系对照（数据层契约）。"""
+
+    def test_middle_chinese_rong_six_scholars_six_values(self):
+        cmp = compare_character("融", "middle_chinese")
+        by_id = {r.system_id: r for r in cmp.rows}
+        self.assertTrue(set(SCHOLAR_SYSTEMS) <= set(by_id))
+        # 广韵地位 + phono_ml 行也在，值类型不同
+        self.assertEqual(by_id["guangyun_qieyun_position"].value_kind, "position")
+        self.assertEqual(by_id["phono_ml_baxter_sagart_mc"].value_kind, "transcription")
+        scholar_values = [by_id[sid].values for sid in SCHOLAR_SYSTEMS]
+        for sid, values in zip(SCHOLAR_SYSTEMS, scholar_values):
+            self.assertEqual(by_id[sid].value_kind, "ipa", sid)
+            self.assertTrue(values, sid)
+        # 六家六值，不允许被折叠
+        self.assertEqual(len({v[0] for v in scholar_values}), 6)
+        self.assertTrue(cmp.disagrees)
+
+    def test_old_chinese_rong_reports_karlgren_gap_and_multi_reading(self):
+        cmp = compare_character("融", "old_chinese")
+        by_id = {r.system_id: r for r in cmp.rows}
+        self.assertIn("han_eastern_experimental", by_id)
+        # 高本漢先秦表无此字：如实报缺，不拿别家值补
+        self.assertEqual(by_id["karlgren_oc"].source_status, "missing_character")
+        self.assertFalse(by_id["karlgren_oc"].has_value)
+        self.assertIsNone(by_id["karlgren_oc"].rhyme_group)
+        for sid in ("wangli_oc", "dongtonghe_oc", "zhoufagao_oc", "lifanggui_oc"):
+            self.assertTrue(by_id[sid].has_value, sid)
+            self.assertEqual(by_id[sid].value_kind, "ipa", sid)
+        # 多音字全部值并排：dong/zhou/lifanggui 各 2 条，wangli 1 条
+        for sid in ("dongtonghe_oc", "zhoufagao_oc", "lifanggui_oc"):
+            self.assertEqual(len(by_id[sid].values), 2, sid)
+        self.assertEqual(len(by_id["wangli_oc"].values), 1)
+        self.assertEqual(by_id["wangli_oc"].rhyme_group, "冬")
+        self.assertTrue(cmp.disagrees)
+
+    def test_old_chinese_zhong_includes_legacy_row(self):
+        # legacy 表以简体为键（「东」），繁体「東」精确查不到——与其他接口行为一致
+        cmp = compare_character("中", "old_chinese")
+        by_id = {r.system_id: r for r in cmp.rows}
+        self.assertEqual(len(by_id), 6)
+        legacy = by_id["han_eastern_experimental"]
+        self.assertEqual(legacy.value_kind, "ipa")
+        self.assertTrue(legacy.has_value)
+        self.assertEqual(legacy.values[0], str(EASTERN_HAN_DB["中"]["ipa"]))
+        # 中 在高本漢先秦表韵母为空 → 该体系报缺，不编造
+        self.assertEqual(by_id["karlgren_oc"].source_status, "missing_character")
+        for sid in ("wangli_oc", "dongtonghe_oc", "zhoufagao_oc", "lifanggui_oc"):
+            self.assertEqual(by_id[sid].value_kind, "ipa", sid)
+    def test_early_mandarin_rows_are_transcriptions(self):
+        cmp = compare_character("東", "early_mandarin")
+        self.assertEqual(len(cmp.rows), 5)
+        for r in cmp.rows:
+            self.assertTrue(r.system_id.startswith("zhongyuan_"), r.system_id)
+            if r.has_value:
+                self.assertEqual(r.value_kind, "transcription")
+
+    def test_unknown_character_is_reported_missing_everywhere(self):
+        cmp = compare_character("龘", "old_chinese")
+        self.assertEqual(cmp.system_ids_with_values, ())
+        self.assertEqual(cmp.system_ids_without_values,
+                         tuple(r.system_id for r in cmp.rows))
+        self.assertFalse(cmp.disagrees)
+        for r in cmp.rows:
+            self.assertIn(r.source_status,
+                          {"missing_character", "missing_reconstruction"},
+                          r.system_id)
+
+    def test_invalid_arguments_raise(self):
+        with self.assertRaises(ValueError):
+            compare_character("abcd", "middle_chinese")
+        with self.assertRaises(KeyError):
+            compare_character("東", "nonexistent_period")
 
 
 if __name__ == "__main__":
