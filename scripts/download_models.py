@@ -16,6 +16,7 @@
 import argparse
 import io
 import os
+import re
 import sys
 import tarfile
 import time
@@ -43,41 +44,61 @@ VOSK_URLS = [
 HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "*/*"}
 
 
-def _download(urls, dest, timeout=30):
-    """依次尝试各镜像，成功返回 True。带进度，失败可重试。"""
-    for url in urls:
+def _download(urls, dest, timeout=30, max_rounds=400):
+    """下载到 dest，支持 HTTP Range 断点续传。
+
+    GitHub 资源域名在部分网络下会中途断流，一次 155 MB 的下载经常跑到一半
+    就被重置。所以这里不删半成品：每轮都用 Range 从已有字节数继续，
+    并在多个镜像之间轮换，直到大小对上为止。
+    """
+    total_expected = None
+    for rnd in range(max_rounds):
+        have = os.path.getsize(dest) if os.path.exists(dest) else 0
+        if total_expected and have >= total_expected:
+            print(f"    完成 {have / 1048576:.1f} MB")
+            return True
+
+        url = urls[rnd % len(urls)]
         host = url.split("/")[2]
-        for attempt in (1, 2):
-            print(f"  下载 <- {host} (第 {attempt} 次)")
-            try:
-                req = urllib.request.Request(url, headers=HEADERS)
-                with urllib.request.urlopen(req, timeout=timeout) as resp:
-                    total = int(resp.headers.get("Content-Length") or 0)
-                    got = 0
-                    t0 = time.time()
-                    with open(dest, "wb") as fh:
-                        while True:
-                            chunk = resp.read(262144)
-                            if not chunk:
-                                break
-                            fh.write(chunk)
-                            got += len(chunk)
-                            if total and got % (8 * 1024 * 1024) < 262144:
-                                print(f"    {got * 100 // total:3d}%  "
-                                      f"{got / 1048576:.1f}/{total / 1048576:.1f} MB  "
-                                      f"({got / 1024 / max(time.time() - t0, .001):.0f} KB/s)")
-                size = os.path.getsize(dest)
-                print(f"    完成 {size / 1048576:.1f} MB")
-                if total and size != total:
-                    raise IOError(f"大小不符 {size} != {total}")
+        headers = dict(HEADERS)
+        if have:
+            headers["Range"] = f"bytes={have}-"
+        tag = f"续传 {have / 1048576:.1f} MB" if have else "从头下载"
+        print(f"  下载 <- {host}（{tag}，第 {rnd + 1} 轮）")
+
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                if resp.status == 206:
+                    m = re.search(r"/(\d+)\s*$", resp.headers.get("Content-Range", ""))
+                    if m:
+                        total_expected = int(m.group(1))
+                    mode = "ab"
+                else:
+                    total_expected = int(resp.headers.get("Content-Length") or 0) or None
+                    mode = "wb"
+                    have = 0
+
+                t0 = time.time()
+                with open(dest, mode) as fh:
+                    while True:
+                        chunk = resp.read(262144)
+                        if not chunk:
+                            break
+                        fh.write(chunk)
+                        have += len(chunk)
+                        if total_expected and have % (8 * 1024 * 1024) < 262144:
+                            print(f"    {have * 100 // total_expected:3d}%  "
+                                  f"{have / 1048576:.1f}/{total_expected / 1048576:.1f} MB  "
+                                  f"({have / 1024 / max(time.time() - t0, .001):.0f} KB/s)")
+
+            if total_expected and os.path.getsize(dest) >= total_expected:
+                print(f"    完成 {os.path.getsize(dest) / 1048576:.1f} MB")
                 return True
-            except Exception as exc:  # noqa: BLE001
-                print(f"    失败: {type(exc).__name__}: {str(exc)[:120]}")
-                if os.path.exists(dest):
-                    try:
-                        os.remove(dest)
-                    except OSError:
-                        pass
+        except Exception as exc:  # noqa: BLE001
+            print(f"    断流: {type(exc).__name__}: {str(exc)[:100]}（已保留 "
+                  f"{(os.path.getsize(dest) if os.path.exists(dest) else 0) / 1048576:.1f} MB，续传）")
+            time.sleep(2)
     return False
 
 
