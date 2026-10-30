@@ -6,6 +6,15 @@ import urllib.request
 import urllib.parse
 import time
 import csv
+import sys
+
+# 脚本挪进了 tools/：把「本目录」和「仓库根」都放进 sys.path，
+# 这样 import phonology_db / from db_expander import ... 仍然可用。
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+for _p in (os.path.dirname(os.path.abspath(__file__)), _ROOT):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
 import phonology_db
 
 def fetch_ipa_from_yindian(char):

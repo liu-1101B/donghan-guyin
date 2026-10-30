@@ -1,6 +1,9 @@
 """ test_expander.py 验证 db_expander 的核心逻辑是否正常 """
 import sys, os
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+for _p in (os.path.dirname(os.path.abspath(__file__)), _ROOT):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 import phonology_db
 
@@ -119,4 +122,4 @@ print("\n" + "=" * 60)
 print("✅ 验证完成！")
 print("=" * 60)
 print("如果上面都是 ✅ 没有 ❌，说明 db_expander.py 逻辑正确。")
-print("你可以在自己电脑上运行完整的 API 导入: python db_expander.py")
+print("你可以在自己电脑上运行完整的 API 导入: python tools/db_expander.py")

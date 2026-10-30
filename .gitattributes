@@ -1,0 +1,20 @@
+# 统一行尾：源码 LF，Windows 批处理 CRLF。
+# 不加这个文件时，Windows 上 core.autocrlf=true 会让每次改动都夹带整文件的换行噪声。
+* text=auto
+
+*.py   text eol=lf
+*.md   text eol=lf
+*.html text eol=lf
+*.toml text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.tokens.txt text eol=lf
+
+*.bat  text eol=crlf
+*.iss  text eol=crlf
+*.ps1  text eol=crlf
+
+*.onnx binary
+*.zip  binary
+*.exe  binary
+*.png  binary

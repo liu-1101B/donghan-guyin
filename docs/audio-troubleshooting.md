@@ -159,4 +159,4 @@ sudo systemctl status bluetooth
 - `robot/bt_reset.sh` — A2DP 重置脚本
 - `robot/monitor_a2dp.sh` — 取证监视器（10s 只读状态检查 + 60s 探测音，
   故障自动抓快照不恢复；日志 `~/a2dp_monitor.log`，快照 `~/a2dp_fault_snapshot/`）
-- `ROBOT_README.md` — 完整排障史（"A2DP 假连接"一节）
+- [docs/robot.md](robot.md) — 完整排障史（"A2DP 假连接"一节）

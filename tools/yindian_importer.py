@@ -3,7 +3,7 @@ yindian_importer.py
 从 nk2028/yindian-manus 项目提取东汉音数据，扩充项目音韵数据库
 
 使用方式：
-    python yindian_importer.py
+    python tools/yindian_importer.py
 
 依赖：无额外依赖，只需要 yindian-manus 项目已克隆到本地
 """
@@ -319,7 +319,7 @@ def main():
 
 或者用自动方式：
 6. 修改本脚本中的 YINDIAN_DIR 路径
-7. 运行 python yindian_importer.py --auto
+7. 运行 python tools/yindian_importer.py --auto
 """)
 
     # 输出可补充的字列表，方便逐字查询

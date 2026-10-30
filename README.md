@@ -1,4 +1,4 @@
-﻿# 🏛️ 古韵 · 东汉洛阳官音合成器
+# 🏛️ 古韵 · 东汉洛阳官音合成器
 
 **白话 → 古文 → 东汉音IPA标注 → 三轨音频**
 
@@ -74,20 +74,33 @@ Windows 机器人界面的麦克风/扬声器通过 `sounddevice` 访问系统�
 
 ---
 
-## 项目文件说明
+## 目录结构
 
-| 文件 | 功能 |
-|---|---|
-| `guyun_app.py` | 主界面（Streamlit） |
-| `phonology_db.py` | 东汉音韵数据库（**703字**） |
-| `classical_translator.py` | 白话→古文翻译引擎 |
-| `sound_synth.py` | 双引擎音频合成（eSpeak-ng + 共振峰） |
-| `db_expander.py` | 数据库扩充工具（API 导入 + 谐声推导） |
-| `yindian_importer.py` | 从 yindian-manus 项目导入音韵数据 |
-| `test_expander.py` | 扩充工具测试脚本 |
-| `requirements.txt` | Python 依赖清单 |
-| `start.bat` | Windows 一键启动脚本 |
-| `packaging/` | PyInstaller + Inno Setup 打包构建 |
+```
+├── robot/           新版机器人界面（Streamlit）、音频 IO、录音组件入口
+├── services/        识别 / 大模型 / TTS 客户端
+├── language/        文言应答引擎、东汉 IPA 合成
+├── components/      自建 Streamlit 组件（按住说话）
+├── config/          音频设备等默认配置
+├── tests/           单元测试（27 项；`python -m unittest discover -s tests`）
+├── tools/           音韵库扩充与导入脚本（开发用，不是运行依赖）
+├── packaging/       PyInstaller 打包（v4 便携版）
+├── docs/            机器人与音频排障文档
+├── phonology_db.py  东汉音韵数据库（703 字）
+├── sound_synth.py   双引擎音频合成（eSpeak-ng + 共振峰）
+├── classical_translator.py  白话→古文翻译引擎
+└── guyun_app.py     旧版「独立合成器」界面（v3 那个）
+```
+
+运行依赖两个清单：`requirements-robot.txt`（机器人界面，含 streamlit/sherpa-onnx/sounddevice）与
+`requirements.txt`（只要合成器时用）。启动入口：`start.bat`（机器人界面）、`start_synthesizer.bat`（旧合成器）。
+
+## 文档
+
+- [docs/robot.md](docs/robot.md) — 机器人界面的架构、Jetson 环境、蓝牙音频排障史
+- [docs/audio-troubleshooting.md](docs/audio-troubleshooting.md) — A2DP 无声问题的完整排查记录（2026-10）
+- [packaging/BUILD_GUIDE.md](packaging/BUILD_GUIDE.md) — Windows 便携版打包
+- [CHANGELOG.md](CHANGELOG.md) — 版本变更
 
 ---
 
@@ -129,24 +142,18 @@ README 所列技术来源包括上古音构拟体系、中古《切韵》对照�
 1. 为每个音韵条目记录来源、重构体系、适用时期、推导规则及置信度。
 2. 将上古音、中古音和目标汉代拟音分层保存，避免把不同时期的标签直接混用。
 3. 用公开参考字表和明确判分标准建立测试集；同时报告覆盖率、争议项和失败案例。
-4. 将 packaging/ 下为打包做过的变体明确记录其相对根目录版本的差异，并在构建前进行自动一致性检查。
+4. 为每个音韵条目记录来源、重构体系、适用时期、推导规则及置信度。
 
-### 根目录与 packaging 目录
-
-packaging/ 中包含为桌面打包准备的应用代码副本。这些文件与根目录同名文件并不完全相同，可能包含打包路径或运行方式相关改动；修改根目录源文件后，不应假定安装包会自动包含该修改。发布前请核对两套代码的差异，并记录哪些差异是有意保留的。
-
-## 打包为 EXE
+## 打包为便携版
 
 详见 [packaging/BUILD_GUIDE.md](packaging/BUILD_GUIDE.md)。
 
-```bash
+```powershell
 cd packaging
-pip install pyinstaller
-python download_espeak.py
-build.bat
+..\.venv\Scripts\python -m PyInstaller --noconfirm --clean 古韵机器人.spec
 ```
 
-产物：`dist/古韵合成器/` 文件夹 + Inno Setup 安装包。
+产物：`packaging/dist/古韵机器人/`（便携目录，双击 `启动.bat`）+ 同目录 zip。
 
 ---
 
