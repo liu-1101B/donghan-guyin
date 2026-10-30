@@ -18,7 +18,7 @@
 
 ### 方式一：下载便携包（推荐，免安装）
 
-到 [Releases](https://github.com/liu-1101B/donghan-guyin/releases/latest) 下载 `guyun-robot-v4.0.0-windows-x64.zip`（约 188 MB），解压到可写目录，然后：
+到 [Releases](https://github.com/liu-1101B/donghan-guyun/releases/latest) 下载 `guyun-robot-v4.0.0-windows-x64.zip`（约 188 MB），解压到可写目录，然后：
 
 1. 双击 `下载识别模型.bat` —— 拉取 SenseVoice 识别模型（约 228 MB，通常半分钟；跳过也能用，只是语音输入不可用）；
 2. 双击 `启动.bat` —— 浏览器会自动打开 `http://localhost:8501`。
@@ -62,8 +62,8 @@ LLM_API_KEY=填写你自己的密钥
 ### 方式四：Linux / Jetson 运行机器人界面
 
 ```bash
-git clone https://github.com/liu-1101B/donghan-guyin
-cd donghan-guyin
+git clone https://github.com/liu-1101B/donghan-guyun
+cd donghan-guyun
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-robot.txt

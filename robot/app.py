@@ -3,7 +3,7 @@ robot/app.py
 东汉古韵机器人 · 使用界面（Streamlit，风格对齐原项目 guyun_app.py）
 
 启动：
-    cd donghan-guyin && source .venv/bin/activate
+    cd donghan-guyun && source .venv/bin/activate
     streamlit run robot/app.py
     # 浏览器打开 http://localhost:8501
 

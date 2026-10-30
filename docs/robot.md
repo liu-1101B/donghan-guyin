@@ -77,7 +77,7 @@ Windows 使用原生音频后端（`sounddevice/PortAudio`），不需要安装 
 # 系统工具（需要 root；本沙箱无法 sudo，请在开发板终端执行）
 sudo apt install -y alsa-utils ffmpeg   # espeak-ng 可选（缺失时自动用共振峰回退）
 
-cd donghan-guyin
+cd donghan-guyun
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-robot.txt
