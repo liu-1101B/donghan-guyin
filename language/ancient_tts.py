@@ -8,6 +8,7 @@ language/ancient_tts.py
 import re
 import unicodedata
 from dataclasses import dataclass, field
+from typing import Optional
 
 from phonology_db import lookup_char, EASTERN_HAN_DB
 from sound_synth import synthesize_text, audio_to_wav_bytes, SAMPLE_RATE
@@ -70,9 +71,10 @@ def _is_cjk(ch):
 @dataclass
 class AncientResult:
     ipa_text: str
-    coverage: int          # 已收录字数
-    approx: int            # 拼音近似字数
+    coverage: int          # 已收录字数（所选体系内）
+    approx: int            # 拼音近似字数（仅无体系回退路径使用）
     unknown: list = field(default_factory=list)
+    system_id: Optional[str] = None   # 实际使用的体系；None = 东汉实验字表旧路径
 
     @property
     def total(self):
@@ -83,8 +85,39 @@ class AncientResult:
         return round(100 * self.coverage / self.total, 1) if self.total else 0.0
 
 
-def text_to_ipa(classical: str) -> AncientResult:
-    """文言文 → IPA 序列（标点转停顿），并统计覆盖率"""
+def _resolve_synthesis_system(system_id: Optional[str]) -> str:
+    """把用户选择的体系解析成发音引擎可用的路径。
+
+    返回 ``"legacy"``（东汉实验字表旧路径）或学者体系 id。
+    只有逐字 IPA 体系（11 家 Sinica 学者 + 旧实验字表）能送发音引擎；
+    反切地位 / PHONO-ML / 中原音韵转写 / 未接入体系一律拒绝并说明原因，
+    不静默降级到别的体系。
+    """
+    if not system_id:
+        return "legacy"
+    from language.history import get_system, SCHOLAR_SYSTEMS_ALL
+    system = get_system(system_id)   # 未知 id → KeyError，调用方显式处理
+    if system.id == "han_eastern_experimental":
+        return "legacy"
+    if system.id in SCHOLAR_SYSTEMS_ALL:
+        return system.id
+    raise ValueError(
+        f"体系「{system.name}」（{system.id}）没有可合成的逐字 IPA"
+        f"（status={system.status}）：它是查询/对照用的资料，"
+        f"不能送发音引擎；请用 lookup_reading / compare_character 查询。")
+
+
+def text_to_ipa(classical: str, system_id: Optional[str] = None) -> AncientResult:
+    """文言文 → IPA 序列（标点转停顿），并统计覆盖率。
+
+    system_id=None：东汉实验字表（703 字）+ 现代拼音近似回退，行为与旧版一致。
+    system_id=<学者体系 id>：逐字查该体系 Sinica 拟音表（如 "wangli_mc"、
+    "lifanggui_oc"）；体系内缺字或源表缺陷行计为 unknown，
+    **不用现代拼音补**（不伪造该体系读音）。
+    无逐字 IPA 的体系（反切地位 / PHONO-ML / 中原音韵 / 未接入）抛 ValueError。
+    """
+    mode = _resolve_synthesis_system(system_id)
+    from language.history import lookup_reading
     ipa_parts, unknown = [], []
     coverage = approx = 0
     for ch in classical:
@@ -95,19 +128,27 @@ def text_to_ipa(classical: str) -> AncientResult:
         elif ch.strip() and not _is_cjk(ch):
             continue
         elif ch.strip():
-            data = lookup_char(ch)
-            if data:
-                coverage += 1
+            if mode == "legacy":
+                data = lookup_char(ch)
+                if data:
+                    coverage += 1
+                else:
+                    py = get_pinyin_fallback(ch)
+                    est = estimate_ipa_from_pinyin(py) if py else None
+                    if est:
+                        approx += 1
+                        data = {'ipa': est}
+                    else:
+                        unknown.append(ch)
+                        continue
+                ipa_parts.append(data['ipa'])
             else:
-                py = get_pinyin_fallback(ch)
-                est = estimate_ipa_from_pinyin(py) if py else None
-                if est:
-                    approx += 1
-                    data = {'ipa': est}
+                reading = lookup_reading(ch, mode)
+                if reading.available:
+                    coverage += 1
+                    ipa_parts.append(reading.ipa)
                 else:
                     unknown.append(ch)
-                    continue
-            ipa_parts.append(data['ipa'])
         # 引号括号等直接跳过
     # 过滤含中文字符的非法片段
     clean = [p for p in ipa_parts
@@ -117,17 +158,20 @@ def text_to_ipa(classical: str) -> AncientResult:
         coverage=coverage,
         approx=approx,
         unknown=unknown,
+        system_id=None if mode == "legacy" else mode,
     )
 
 
 def synthesize_ancient(classical: str, pitch: int = 130,
-                       speed: float = 1.0) -> tuple:
+                       speed: float = 1.0,
+                       system_id: Optional[str] = None) -> tuple:
     """文言文 → (WAV bytes, AncientResult)。空文本返回 (b'', result)
 
     pitch: 基频 Hz（音色高低）
     speed: 语速倍率，1.0 正常；<1 更慢（字间停顿加大），>1 更快
+    system_id: 拟音体系（见 text_to_ipa）；None = 东汉实验字表旧路径
     """
-    result = text_to_ipa(classical)
+    result = text_to_ipa(classical, system_id=system_id)
     if not result.ipa_text.strip():
         return b'', result
     # 语速 → 字间停顿：正常 0.08s，放慢到 0.20s，加快到 0.03s
@@ -138,13 +182,14 @@ def synthesize_ancient(classical: str, pitch: int = 130,
     return audio_to_wav_bytes(audio, SAMPLE_RATE), result
 
 
-def db_coverage(classical: str) -> dict:
-    """统计一段文字在音韵库中的覆盖情况（不合成）"""
-    r = text_to_ipa(classical)
+def db_coverage(classical: str, system_id: Optional[str] = None) -> dict:
+    """统计一段文字在音韵库/所选体系中的覆盖情况（不合成）"""
+    r = text_to_ipa(classical, system_id=system_id)
     return {
         'total': r.total,
         'covered': r.coverage,
         'approx': r.approx,
         'pct': r.coverage_pct,
         'unknown': r.unknown,
+        'system_id': r.system_id,
     }

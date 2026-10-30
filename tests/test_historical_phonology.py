@@ -16,6 +16,9 @@ from language.history import (TIMELINE, get_period, get_system, lookup_reading,
                                SCHOLAR_SYSTEMS_OLD,
                                compare_character)
 from phonology_db import EASTERN_HAN_DB
+from language.ancient_tts import text_to_ipa
+
+
 
 
 class SinicaScholarSystemsTests(unittest.TestCase):
@@ -501,6 +504,63 @@ class CompareCharacterTests(unittest.TestCase):
             compare_character("abcd", "middle_chinese")
         with self.assertRaises(KeyError):
             compare_character("東", "nonexistent_period")
+
+
+class TtsSystemRoutingTests(unittest.TestCase):
+    """Phase 3 (1): text_to_ipa(system_id=...) routes to the chosen system."""
+
+    def test_default_path_unchanged(self):
+        r = text_to_ipa("中")  # 中
+        self.assertEqual(r.coverage, 1)
+        self.assertEqual(r.approx, 0)
+        self.assertIsNone(r.system_id)
+        self.assertEqual(r.ipa_text, str(EASTERN_HAN_DB["中"]["ipa"]))
+
+    def test_scholar_system_uses_scholar_ipa(self):
+        # 東 wangli_mc == tuŋ (frozen by MiddleChineseScholarTests)
+        r = text_to_ipa("東", system_id="wangli_mc")
+        self.assertEqual(r.system_id, "wangli_mc")
+        self.assertEqual(r.coverage, 1)
+        self.assertEqual(r.approx, 0)
+        self.assertEqual(r.ipa_text, "tu" + "ŋ")
+
+    def test_scholar_system_missing_not_approximated(self):
+        # 龘 is absent from every Sinica table; no pinyin back-fill allowed
+        r = text_to_ipa("龘", system_id="wangli_mc")
+        self.assertEqual(r.coverage, 0)
+        self.assertEqual(r.approx, 0)
+        self.assertEqual(r.unknown, ["龘"])
+        self.assertEqual(r.ipa_text, "")
+
+    def test_scholar_system_karlgren_gap_reports_unknown(self):
+        # 融 is missing from Karlgren's pre-Qin workbook
+        r = text_to_ipa("融", system_id="karlgren_oc")
+        self.assertEqual(r.unknown, ["融"])
+        self.assertEqual(r.approx, 0)
+
+    def test_non_ipa_system_rejected(self):
+        for sid in ("guangyun_qieyun_position", "zhongyuan_unt",
+                    "phono_ml_baxter_sagart_mc", "zhengzhang_oc"):
+            with self.assertRaises(ValueError, msg=sid):
+                text_to_ipa("融", system_id=sid)
+
+    def test_unknown_system_id_raises_keyerror(self):
+        with self.assertRaises(KeyError):
+            text_to_ipa("融", system_id="nonexistent_system")
+
+    def test_han_eastern_experimental_maps_to_legacy(self):
+        r = text_to_ipa("中", system_id="han_eastern_experimental")
+        self.assertEqual(r.coverage, 1)
+        self.assertIsNone(r.system_id)
+        self.assertEqual(r.ipa_text, str(EASTERN_HAN_DB["中"]["ipa"]))
+
+    def test_mixed_text_counts(self):
+        # 東 has a value in karlgren_oc; 龘 is absent from every OC table
+        # (frozen by test_unknown_character_is_reported_missing_everywhere)
+        r = text_to_ipa("東龘", system_id="karlgren_oc")
+        self.assertEqual(r.coverage, 1)
+        self.assertEqual(r.unknown, ["龘"])
+        self.assertIn("tu" + "ŋ", r.ipa_text)
 
 
 if __name__ == "__main__":
