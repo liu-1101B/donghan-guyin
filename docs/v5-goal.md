@@ -21,7 +21,7 @@
 | 4 | 现代朗读（Edge TTS 轨） | 联网时合成自然语音 | ✅ 已验证（MP3 35712 B，不再回退） |
 | 5 | 机械参考轨 | 纯参数合成，学术对照用 | ✅ 已验证 |
 | 6 | 按住说话录音 | 浏览器授权后能录到音频并回传 | ✅ 本机录音链路通（selftest True）；页面端待手测 |
-| 7 | 语音识别（ASR） | 录完能转成文字，优先 SenseVoice | 🟡 依赖已装齐，模型下载中（见下） |
+| 7 | 语音识别（ASR） | 录完能转成文字，优先 SenseVoice | ✅ 已验证（TTS→ASR 闭环逐字正确） |
 | 8 | 文言对谈（LLM） | 本地词典模式可用；填 API 后走大模型 | ✅ 词典模式可用；API 未配（可选） |
 | 9 | 设备播放（蓝牙/USB） | 能选输出设备并从该设备出声 | ✅ 已验证（枚举 5 个输出 + 自检回放成功） |
 | 10 | 多轮对话历史 | 保留最近 N 轮，可清空 | ✅ 已验证 |
@@ -29,8 +29,12 @@
 
 > 2026-10-30 实测记录：依赖层（miniaudio / sounddevice / opencc / vosk /
 > sherpa-onnx）已装齐；`scripts/download_models.py` 已支持断点续传。
-> SenseVoice 模型（155 MB）因外网限速仍在下载，`models/sense-voice/`
-> 落地后第 7 项即可转 ✅。
+>
+> ASR 闭环实测：Edge TTS 合成「今天天气真好，我和朋友一起去河边散步」→
+> miniaudio 解码为 16 kHz WAV → SenseVoice 识别为
+> 「今天天气真好，我和朋友一起去河边散步。」（逐字正确，自动补标点）。
+> `available_backends()` 返回 `['sensevoice']`，后端自动选中 SenseVoice。
+> Vosk 兜底模型仍在后台下载（不影响使用）。
 
 ## 当前已知缺口
 
