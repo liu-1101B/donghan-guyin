@@ -74,18 +74,32 @@
 
 **差距（关键）**
 
-14 个注册体系里 **0 个能产出可合成 IPA** —— 逐个实测 `available` 全为 `False`：
+曾经是 14 个注册体系里 **0 个能产出可合成 IPA**。2026-10-30 已打通第一个：
+
+| 体系 | 状态 |
+|---|---|
+| `wangli_mc`（王力中古） | ✅ `integrated_dataset`，19523 字可查，`available=True` |
+
+其余 13 个仍不可合成：
 
 ```
 guangyun_qieyun_position      source_record          available=False
 phono_ml_baxter_sagart_mc     source_reconstruction  available=False
 zhongyuan_*（5 个）            source_reconstruction  available=False
 zhengzhang_oc / baxter_sagart_oc / karlgren_mc /
-wangli_mc / zhengzhang_mc / mandarin_modern            not_integrated
+zhengzhang_mc / mandarin_modern                        not_integrated
 ```
 
-也就是说：资料能查、能追溯来源，但没有任何一条能直接送到发音引擎。
-真正的「拟音表逐字导入 + 覆盖率报告」还没做。
+王力中古的接入细节（`language/history/sinica_scholar_data.py`）：
+
+- 来源：Sinica 汉字构形资料库「014 隋唐_擬音_王力系統.xlsx」，已随仓库打包，PDM
+- 25521 条匹配 → 25508 条加载 → **19523 个去重字**、4772 个多音字
+- **上游没有声调字段**，接口 `tone` 恒为 `None`，绝不补全
+- 13 行源表错位（聲母列填了韵母值，如「弩」写成 `u`），标记
+  `source_record_defect` 且不给 IPA，避免产生假拟音
+- 另一份 `scripts/coverage_report.py` 生成覆盖率报告，含跳过原因与符号库存
+
+仍未解决的：**没有第二个体系接入**，且「拟音表 → 发音」这一段还没接（第三阶段）。
 
 **下一步**
 

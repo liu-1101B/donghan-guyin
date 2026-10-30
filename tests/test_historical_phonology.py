@@ -10,7 +10,54 @@ from language.history import (TIMELINE, get_period, get_system, lookup_reading,
                               lookup_phono_ml, phono_ml_record_count,
                               lookup_zhongyuan, zhongyuan_record_count,
                               dataset_available, lookup_sinica_ccr_records,
-                              sinica_ccr_record_count, sinica_ccr_package_counts)
+                              sinica_ccr_record_count, sinica_ccr_package_counts,
+                              lookup_scholar_reading, scholar_character_count,
+                              scholar_coverage)
+
+
+class WangLiMiddleChineseTests(unittest.TestCase):
+    """王力中古拟音（Sinica 汉字构形资料库）接入的契约。"""
+
+    def test_dataset_is_bundled_and_queryable(self):
+        self.assertGreater(scholar_character_count("wangli_mc"), 19000)
+        self.assertTrue(lookup_scholar_reading("東", "wangli_mc"))
+
+    def test_reading_composes_initial_and_final(self):
+        reading = lookup_reading("東", "wangli_mc")
+        self.assertTrue(reading.available)
+        self.assertEqual(reading.ipa, "tuŋ")
+        self.assertEqual(reading.initial, "t")
+        self.assertEqual(reading.final, "uŋ")
+        self.assertEqual(reading.source_status, "scholar_reconstruction")
+
+    def test_tone_is_never_invented(self):
+        # 上游没有聲調字段，任何字都不该凭空出现声调
+        for ch in ("東", "天", "人", "中", "國"):
+            self.assertIsNone(lookup_reading(ch, "wangli_mc").tone)
+
+    def test_defective_source_row_yields_no_ipa(self):
+        # 源表这些行把韵母值填进了聲母列，拼出来会是假拟音
+        reading = lookup_reading("弩", "wangli_mc")
+        self.assertFalse(reading.available)
+        self.assertIsNone(reading.ipa)
+        self.assertEqual(reading.source_status, "source_record_defect")
+
+    def test_multi_reading_character_keeps_all_rows(self):
+        self.assertGreater(len(lookup_scholar_reading("哆", "wangli_mc")), 1)
+
+    def test_integrated_in_middle_chinese_filter(self):
+        ids = [s.id for s in systems_for_period("middle_chinese",
+                                                include_metadata_only=False)]
+        self.assertIn("wangli_mc", ids)
+
+    def test_coverage_reports_declare_skips(self):
+        cov = scholar_coverage("wangli_mc")
+        self.assertIs(cov["tone_available"], False)
+        self.assertEqual(cov["skipped_suspect_initial"], 13)
+        self.assertEqual(cov["skipped_not_single_char"], 13)
+        self.assertEqual(cov["matched_records"],
+                         cov["records"] + cov["skipped_not_single_char"]
+                         + cov["skipped_empty_final"])
 
 
 class TimelineTests(unittest.TestCase):

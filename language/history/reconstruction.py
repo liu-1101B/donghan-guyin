@@ -2,6 +2,7 @@
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional
 from .provenance import Provenance
+from .sinica_scholar_data import SCHOLAR_SYSTEMS as SINICA_SCHOLAR_SYSTEMS
 from .systems import get_system
 
 
@@ -143,6 +144,63 @@ def lookup_reading(character: str, system_id: str, *, period_id: Optional[str] =
             xiaoyun_id=first.xiaoyun_id or None,
             fanqie_upper=first.fanqie_upper or None,
             fanqie_lower=first.fanqie_lower or None,
+        )
+
+    if system_id in SINICA_SCHOLAR_SYSTEMS:
+        from .sinica_scholar_data import (lookup_scholar_reading, SCHOLAR_SYSTEMS)
+        records = lookup_scholar_reading(character, system_id)
+        system_name = SCHOLAR_SYSTEMS[system_id]
+        if not records:
+            return Reading(character, system_id, selected_period, None,
+                source_status="missing_character",
+                note=f"Sinica 汉字构形资料库中「{system_name}」无此字条。")
+        # 多音字里可能只有个别行错位，优先取非错位的记录
+        clean = [r for r in records if not r.suspect]
+        first = clean[0] if clean else records[0]
+        if not clean:
+            # 源表该行聲母列填的是韵母值，拼 IPA 会得到假读音，故不给 ipa
+            return Reading(
+                character, system_id, selected_period, None,
+                initial=first.initial or None,
+                final=first.final or None,
+                source_status="source_record_defect",
+                provenance=Provenance(
+                    source_title=f"漢字構形資料庫 {first.source_workbook or system_name}",
+                    source_author="中央研究院 資訊科學研究所（xiaoxue.iis.sinica.edu.tw）",
+                    source_url="https://xiaoxue.iis.sinica.edu.tw/ccrdata/",
+                    page_or_entry=f"{first.source_sheet} 第 {first.source_row} 行",
+                    confidence="unassessed",
+                    evidence_note="源表聲母列疑似错位（填入韵母值），不作拟音使用。",
+                ),
+                note=("源表该字條的聲母列疑似错位（填的是韵母值），"
+                      "本接口不生成 IPA，需回查原表。"),
+                transcription=first.final or None,
+                transcription_scheme=system_name,
+            )
+        note = (f"{system_name}（王力方案）逐字拟音，聲母+韻母已按原样拼接。"
+                "上游无聲調字段，故不含声调，不能据此判断调类。")
+        if len(records) > 1:
+            note += f" 此字有 {len(records)} 条记录（多音）；请用 lookup_scholar_reading() 查看全部。"
+        return Reading(
+            character, system_id, selected_period, first.ipa,
+            initial=first.initial or None,
+            final=first.final or None,
+            tone=None,      # 上游确实没有声调，不编造
+            source_status="scholar_reconstruction",
+            provenance=Provenance(
+                source_title=f"漢字構形資料庫 {first.source_workbook or system_name}",
+                source_author="中央研究院 資訊科學研究所（xiaoxue.iis.sinica.edu.tw）",
+                source_url="https://xiaoxue.iis.sinica.edu.tw/ccrdata/",
+                source_version=f"sha256 {first.source_sha256}" if first.source_sha256 else "",
+                page_or_entry=f"{first.source_sheet} 第 {first.source_row} 行",
+                derivation_rule="原表 聲母 + 韻母 直接拼接（零聲母 0 → 无辅音）",
+                confidence="medium",
+                evidence_note=("逐字拟音表原样接入，未做音值推演；"
+                               "声调缺失、部分符号（ȶ/ȡ 等）属王力方案惯用写法。"),
+            ),
+            note=note,
+            transcription=first.ipa,
+            transcription_scheme=system_name,
         )
 
     if system_id != "han_eastern_experimental":

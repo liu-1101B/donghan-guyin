@@ -42,6 +42,26 @@
 
 东汉旧字表继续以 han_eastern_experimental 暴露，但结果标记为 legacy_experimental，来源置信度为 unassessed。下一步需逐条核验来源、著作版本、推导链和争议。
 
+## 第二套已接入数据：王力中古拟音（Sinica 汉字构形资料库）
+
+`language/history/sinica_scholar_data.py` 接入「014 隋唐_擬音_王力系統.xlsx」
+（已随仓库打包于 `data/historical/sinica_ccr_import/`，许可 PDM）。
+
+- 25521 条匹配 → 25508 条加载 → 19523 个去重字、4772 个多音字
+- 接口：`lookup_reading(ch, "wangli_mc")`、`lookup_scholar_reading(ch, "wangli_mc")`、
+  `scholar_coverage("wangli_mc")`
+- **上游无聲調字段**：`tone` 恒为 `None`，本项目不推测、不补全
+- 聲母 `0` 表示零声母，拼 IPA 时按无辅音处理
+- 13 行源表错位（聲母列填了韵母值，如「弩」= `u`、「反」有一行 = `ǐɐn`）：
+  标记 `source_record_defect` 且不生成 IPA；多音字优先取非错位记录
+- 覆盖率报告：`python scripts/coverage_report.py`
+
+同一数据包里还有董同龢、周法高、李方桂、陳新雄、高本漢的中古方案，
+接入时在 `SCHOLAR_SYSTEMS` 加一行即可（已在模块里记为 `AVAILABLE_BUT_UNREGISTERED`）。
+
+**注意**：这一步只解决「查得到」，没有解决「播得出」。`ancient_tts.text_to_ipa()`
+仍只查 703 字旧表，发音链路与数据层尚未打通。
+
 ## 下一步实施顺序
 
 1. 盘点 phonology_db.py，为条目补来源/版本/推导规则，同时保留旧字段兼容。

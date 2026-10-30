@@ -80,8 +80,12 @@ SYSTEMS = (
         notes="接入时需明确采用的著作与版本。"),
     ReconstructionSystem("wangli_mc", "中古音构拟（王力）", "王力",
         ("middle_chinese", "late_middle_chinese"),
-        "中古音参考体系；当前仅登记元数据。",
-        notes="接入时需记录著作、版本和符号规范。"),
+        "王力《汉语史稿》系中古音构拟，逐字给出聲母与韻母片段。",
+        status="integrated_dataset",
+        source_url="https://xiaoxue.iis.sinica.edu.tw/ccrdata/",
+        notes=("数据来自中央研究院漢字構形資料庫「014 隋唐_擬音_王力系統.xlsx」"
+               "（PDM），已随仓库打包。上游**无聲調字段**，本项目不补全；"
+               "聲母 0 表示零聲母。能否直接送合成器属第三阶段音素能力矩阵的问题。")),
     ReconstructionSystem("zhengzhang_mc", "中古音构拟（郑张尚芳）", "郑张尚芳",
         ("middle_chinese", "late_middle_chinese"),
         "中古音参考体系；当前仅登记元数据。",
