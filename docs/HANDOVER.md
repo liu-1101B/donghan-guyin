@@ -10,7 +10,14 @@
 - 仓库根：`donghan-guyin/`，当前根目录检出的是 **`main`**
 - 本分支的工作树：**`donghan-guyin/.wt-feat-phon/`** ← 所有开发都在这里
 - 分支：`feat/historical-phonology-foundation`
-- 状态：**领先 `origin` 82 个提交，全部本地未推送**（没有推送凭据，**不要推送**）
+- 状态：**已与 `origin` 同步**（2026-10-31 推送至 `60813d7`，共 82 提交）
+- 仓库已改名为 **`donghan-guyun`**：origin 现为
+  `https://github.com/liu-1101B/donghan-guyun.git`（本地 remote 已更新；旧 URL
+  `donghan-guyin` 会 301 重定向但仍可用）
+- 本机**没有保存的 GitHub 凭据**（无 GCM 条目、无 SSH 密钥）：后续推送需要
+  临时 PAT（一次性 `git push https://x-access-token:<PAT>@github.com/...`，
+  勿写入 config，用完即吊销）。直连 github.com:443 通但链路不稳，push 失败时
+  重试几次即可（勿配注册表里陈旧的 127.0.0.1:7897 代理，端口没在监听）
 - 工作区约定：`run_feat_tests.py`（工作树根，未跟踪，测试运行器，**保留**）
 
 ## 二、运行环境（照抄即可）
@@ -267,4 +274,6 @@ $env:PYTHONUTF8 = "1"; $env:PYTHONIOENCODING = "utf-8"
 - 每完成一块就单独提交，提交信息写清「为什么」而非「改了什么」
 - 涉及数据时，宁可报「缺」也不编造（这是本项目的既有契约）
 - 文档与代码要同步改：`docs/v5-goal.md` 的状态表、`docs/HISTORICAL_PHONOLOGY_ARCHITECTURE.md`
-- **不要推送**（无凭据）；不要动 `main` 检出的根工作树
+- **推送**：分支已与 origin 同步（2026-10-31）；本机无保存凭据，需要推送时
+  让用户提供临时 PAT，一次性 URL 方式推送，**不写入 config、用完提醒吊销**；
+  不要动 `main` 检出的根工作树
